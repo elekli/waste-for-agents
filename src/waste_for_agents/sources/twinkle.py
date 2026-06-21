@@ -14,7 +14,10 @@ import os
 from typing import Any
 
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import (  # type: ignore[attr-defined]  # create_mcp_http_client 執行期存在,僅未列入 __all__
+    create_mcp_http_client,
+    streamable_http_client,
+)
 
 from .base import Row
 
@@ -60,14 +63,14 @@ class TwinkleSource:
             raise TwinkleFetchError("TWINKLE_TOKEN 未設定")
         headers = {"Authorization": f"Bearer {self._token}"}
         try:
-            async with streamablehttp_client(self._url, headers=headers) as (
-                read,
-                write,
-                _,
-            ):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool("query_rows", query)
+            # mcp 1.28:streamable_http_client 不再收 headers,改傳預配的 http_client
+            async with create_mcp_http_client(headers=headers) as http_client:
+                async with streamable_http_client(
+                    self._url, http_client=http_client
+                ) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool("query_rows", query)
         except TwinkleFetchError:
             raise
         except Exception as exc:  # 連線/協定層失敗 → 具名
