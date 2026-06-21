@@ -15,9 +15,15 @@ from datetime import datetime, timezone
 
 from .diff import diff_rows, row_key
 from .sources.base import Source, get_source
-from .store import Store, Watch
+from .store import EventTuple, Store, Watch
 
 Resolve = Callable[[str], Source]
+
+_MAX_ERROR_LEN = 2000  # last_error 截長:避免上游回應撐爆 DB / 經 list_watches 外洩過量
+
+
+def _bound(text: str) -> str:
+    return text if len(text) <= _MAX_ERROR_LEN else text[:_MAX_ERROR_LEN] + "…(truncated)"
 
 
 async def run_watch(store: Store, watch: Watch, resolve: Resolve = get_source) -> int:
@@ -25,29 +31,28 @@ async def run_watch(store: Store, watch: Watch, resolve: Resolve = get_source) -
     try:
         source = resolve(watch.source)
         rows = await source.fetch(watch.query)
-    except Exception as exc:  # 具名記錄、不 re-raise(隔離其他 watch)
-        store.mark_run(watch.id, last_error=f"{type(exc).__name__}: {exc}")
+    except Exception as exc:  # 具名記錄、不 re-raise(隔離其他 watch);不覆蓋 snapshot
+        store.mark_run(watch.id, last_error=_bound(f"{type(exc).__name__}: {exc}"))
         return 0
 
     old = store.get_snapshot(watch.id)
-    store.set_snapshot(watch.id, rows)
     if old is None:
-        store.mark_run(watch.id, last_error=None)
-        return 0  # 首輪:建 baseline,不產 event
+        # 首輪:建 baseline,不產 event(snapshot 與 mark_run 在同一交易)
+        store.record_run(watch.id, rows, [], None)
+        return 0
 
     result = diff_rows(old, rows, watch.key_columns, watch.ignore_columns)
-    count = 0
+    events: list[EventTuple] = []
     for row in result.added:
-        store.append_event(watch.id, "added", row_key(row, watch.key_columns), {"row": row})
-        count += 1
+        events.append(("added", row_key(row, watch.key_columns), {"row": row}))
     for row in result.removed:
-        store.append_event(watch.id, "removed", row_key(row, watch.key_columns), {"row": row})
-        count += 1
+        events.append(("removed", row_key(row, watch.key_columns), {"row": row}))
     for mod in result.modified:
-        store.append_event(watch.id, "modified", mod.key, {"changes": mod.changes})
-        count += 1
-    store.mark_run(watch.id, last_error=None)
-    return count
+        events.append(("modified", mod.key, {"changes": mod.changes}))
+
+    # 原子:events + snapshot 前進 + mark_run 單一交易,中途失敗整批 rollback(不漏報)
+    store.record_run(watch.id, rows, events, None)
+    return len(events)
 
 
 def _is_due(watch: Watch, now_epoch: float) -> bool:

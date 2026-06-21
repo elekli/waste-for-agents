@@ -107,6 +107,36 @@ def test_events_since_cursor(tmp_path) -> None:
     assert cursor == e3
 
 
+def test_delete_watch_cascades_events(tmp_path) -> None:
+    """刪 watch 連帶刪 change_events,避免孤兒事件持續被 list_changes 取得。"""
+    store = _store(tmp_path)
+    w = store.create_watch("twinkle", {}, ["id"], [], 60)
+    store.append_event(w.id, "added", "1", {"row": {"id": 1}})
+    store.append_event(w.id, "added", "2", {"row": {"id": 2}})
+    assert len(store.events_since(None)[0]) == 2
+
+    store.delete_watch(w.id)
+    assert store.events_since(None)[0] == []
+    assert store.get_snapshot(w.id) is None
+
+
+def test_record_run_atomic_writes(tmp_path) -> None:
+    """record_run 一次寫:events + snapshot 前進 + mark_run。"""
+    store = _store(tmp_path)
+    w = store.create_watch("fake", {}, ["id"], [], 60)
+    rows = [{"id": "1", "n": "a"}]
+    events = [("added", "[\"1\"]", {"row": rows[0]})]
+
+    store.record_run(w.id, rows, events, None)
+
+    assert store.get_snapshot(w.id) == rows
+    got_events, cursor = store.events_since(None)
+    assert [e.kind for e in got_events] == ["added"]
+    assert cursor == got_events[0].id
+    got = store.get_watch(w.id)
+    assert got is not None and got.last_run_at is not None and got.last_error is None
+
+
 def test_mark_run_sets_timestamp_and_error(tmp_path) -> None:
     store = _store(tmp_path)
     w = store.create_watch("twinkle", {}, ["id"], [], 60)

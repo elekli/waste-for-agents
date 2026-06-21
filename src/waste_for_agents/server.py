@@ -99,6 +99,10 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         interval_s: int = 300,
     ) -> dict[str, Any]:
         """訂閱一個結構化來源的 query。回 {watch_id}。(write)"""
+        # ⚠ 濫用面(MVP 缺口,開放給可信任 tester 以外前必補,見 TODOS.md / README 安全段):
+        #   query 原樣透傳給 TwinkleSource → Twinkle query_rows 接受 raw SQL where/group_by。
+        #   create_watch 因此 = 借用維運者 token 的「持久排程 raw-SQL 執行 primitive」。
+        #   目前無 query 驗證、無 rate-limit、無 interval 下限、無 source 白名單強制。
         return service.create_watch(source, query, key_columns, ignore_columns, interval_s)
 
     @mcp.tool()

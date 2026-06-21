@@ -97,6 +97,17 @@ list_changes()            // → {"events":[...], "cursor": N}
 **給人試用的部署建議:** 由維運者常駐跑本服務、`TWINKLE_TOKEN` 留在 server 端,
 只把 `…/mcp/` 這個 URL 給 tester——tester 不必持有 token、不必自己跑常駐 process。
 
+## Security(MVP 邊界,先讀再對外)
+
+這是 MVP,對外開放前有幾個已知缺口(完整清單見 [`TODOS.md`](TODOS.md)):
+
+- **`create_watch` 是借用維運者 token 的「持久排程 raw-SQL 執行 primitive」。** `query` 原樣
+  透傳 Twinkle `query_rows`(接受 raw SQL),且無驗證 / 無 rate-limit / 無 interval 下限。
+  **只給可信任的人**,別把 `create_watch` 開放到公網。
+- **`/changes`、`/health` 無授權。** 預設只 bind `127.0.0.1`。若照上面建議由維運者代管而
+  **bind 非 loopback,務必擺在 Tailscale 或反向代理的 auth 之後**——否則所有被監看的 rows 外洩。
+- **錯誤訊息已 scrub token + 截長**(`last_error` 會經 `list_watches` / `/changes` 對外)。
+
 ## Status
 
 MVP 開發中。實作計畫見 [`docs/superpowers/plans/2026-06-21-custos-mvp.md`](docs/superpowers/plans/2026-06-21-custos-mvp.md)。

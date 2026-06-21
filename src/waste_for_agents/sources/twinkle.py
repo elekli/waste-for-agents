@@ -22,10 +22,21 @@ from mcp.client.streamable_http import (  # type: ignore[attr-defined]  # create
 from .base import Row
 
 TWINKLE_URL = "https://api.twinkleai.tw/mcp/"
+_MAX_ERROR_LEN = 1000
 
 
 class TwinkleFetchError(RuntimeError):
     """連線、auth、工具回應或解析失敗。"""
+
+
+def _scrub(text: str, token: str | None) -> str:
+    """把 token 從錯誤訊息抹掉 + 截長。錯誤會被存進 last_error 並經 list_watches/
+    /changes 對外,絕不能帶 secret 或無界上游內容。"""
+    if token:
+        text = text.replace(token, "***").replace(f"Bearer {token}", "Bearer ***")
+    if len(text) > _MAX_ERROR_LEN:
+        text = text[:_MAX_ERROR_LEN] + "…(truncated)"
+    return text
 
 
 def _extract_rows(payload: Any) -> list[Row]:
@@ -36,7 +47,12 @@ def _extract_rows(payload: Any) -> list[Row]:
         )
     columns = payload["columns"]
     rows = payload["rows"]
-    return [dict(zip(columns, row, strict=False)) for row in rows]
+    try:
+        # strict=True:row 與 columns 長度必須一致;截斷的 row 會靜默缺 key,
+        # 下輪補齊就誤報 modified(直擊 moat),故 fail-loud。
+        return [dict(zip(columns, row, strict=True)) for row in rows]
+    except ValueError as exc:
+        raise TwinkleFetchError(f"query_rows row 與 columns 長度不符:{exc}") from exc
 
 
 def _result_payload(result: Any) -> Any:
@@ -73,9 +89,13 @@ class TwinkleSource:
                         result = await session.call_tool("query_rows", query)
         except TwinkleFetchError:
             raise
-        except Exception as exc:  # 連線/協定層失敗 → 具名
-            raise TwinkleFetchError(f"query_rows 呼叫失敗:{exc}") from exc
+        except Exception as exc:  # 連線/協定層失敗 → 具名,且 scrub 掉可能含 token 的訊息
+            raise TwinkleFetchError(
+                _scrub(f"query_rows 呼叫失敗:{type(exc).__name__}: {exc}", self._token)
+            ) from exc
 
         if getattr(result, "isError", False):
-            raise TwinkleFetchError(f"query_rows 回報錯誤:{getattr(result, 'content', None)}")
+            raise TwinkleFetchError(
+                _scrub(f"query_rows 回報錯誤:{getattr(result, 'content', None)}", self._token)
+            )
         return _extract_rows(_result_payload(result))

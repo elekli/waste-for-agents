@@ -10,7 +10,12 @@ import pytest
 
 from waste_for_agents.sources import base
 from waste_for_agents.sources.base import Row, Source, UnknownSourceError, get_source, register
-from waste_for_agents.sources.twinkle import TwinkleFetchError, TwinkleSource, _extract_rows
+from waste_for_agents.sources.twinkle import (
+    TwinkleFetchError,
+    TwinkleSource,
+    _extract_rows,
+    _scrub,
+)
 
 
 class FakeSource:
@@ -70,6 +75,21 @@ def test_extract_rows_bad_shape_raises() -> None:
         _extract_rows(["not", "a", "dict"])
     with pytest.raises(TwinkleFetchError):
         _extract_rows({"rows": []})  # 缺 columns
+
+
+def test_extract_rows_length_mismatch_fails_loud() -> None:
+    """row 比 columns 短 → 拋 TwinkleFetchError(不靜默截斷成缺 key,避免下輪誤報)。"""
+    payload = {"columns": ["a", "b"], "rows": [["1"]]}
+    with pytest.raises(TwinkleFetchError):
+        _extract_rows(payload)
+
+
+def test_scrub_removes_token_and_truncates() -> None:
+    tok = "sk-secret-123"
+    assert "sk-secret-123" not in _scrub(f"failed with Bearer {tok} oops", tok)
+    assert "***" in _scrub(f"x {tok} y", tok)
+    long = _scrub("a" * 5000, None)
+    assert len(long) < 5000 and long.endswith("…(truncated)")
 
 
 @pytest.mark.skipif(not os.environ.get("TWINKLE_TOKEN"), reason="需要 TWINKLE_TOKEN")
