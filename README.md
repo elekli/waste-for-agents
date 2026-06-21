@@ -110,7 +110,7 @@ list_changes()            // → {"events":[...], "cursor": N}
 
 ## Status
 
-MVP 開發中。實作計畫見 [`docs/superpowers/plans/2026-06-21-custos-mvp.md`](docs/superpowers/plans/2026-06-21-custos-mvp.md)。
+MVP 開發中。實作計畫見 [`docs/superpowers/plans/2026-06-21-waste-for-agents-mvp.md`](docs/superpowers/plans/2026-06-21-waste-for-agents-mvp.md)。
 
 ## 開發
 
