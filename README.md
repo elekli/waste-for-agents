@@ -56,8 +56,46 @@ X-Tristero-Status: Silent
 |------|------|------|
 | `create_watch(source, query, key_columns, ignore_columns, interval_s)` | write | 建立一個監看 |
 | `list_changes(since_cursor)` | read | 拉自游標以來的變化(無變化秒回 no-op) |
-| `list_watches()` | read | 列出監看 + 各自 status |
+| `list_watches()` | read | 列出監看 + 各自 status(含 `last_error`) |
 | `delete_watch(watch_id)` | write | 刪除監看 |
+
+唯讀 HTTP 鏡像:`GET /changes?since=<cursor>` 等價 `list_changes`,供 shell 端 hook 用(免 MCP handshake)。健康檢查 `GET /health`。
+
+## Quickstart — the drop
+
+```bash
+# 1. 起常駐服務(TwinkleSource 需要 token;1Password: op://employee/twinkle hub/token)
+export TWINKLE_TOKEN=...
+uv run python -m waste_for_agents serve --port 8848
+#    health:  curl http://127.0.0.1:8848/health        → {"status":"ok",...}
+#    mcp 端點: curl http://127.0.0.1:8848/mcp/           → 406(FastMCP 健康訊號)
+
+# 2. 把它加進 agent(Claude Code)
+claude mcp add --transport http waste http://127.0.0.1:8848/mcp/
+```
+
+接著在 agent 裡:
+
+```jsonc
+// 訂閱「立法院 11 屆議案的狀態」,忽略 timestamp 欄位的 churn
+create_watch(
+  source="twinkle",
+  query={ "dataset_id": "ly-bills",
+          "columns": ["議案編號","議案名稱","議案狀態"],
+          "where": "\"屆\"='11'", "limit": 200 },
+  key_columns=["議案編號"],
+  ignore_columns=["更新時間"],
+  interval_s=300)
+
+// 之後每次醒來:沉默,或一則降臨
+list_changes()            // → {"events":[...], "cursor": N}
+```
+
+**短命 agent(Claude Code session)** 用 SessionStart hook 開場拉一次:見
+[`examples/sessionstart-hook.sh`](examples/sessionstart-hook.sh)——它打 `/changes`、把變化注入 context、把游標存檔,沒變化就安靜。
+
+**給人試用的部署建議:** 由維運者常駐跑本服務、`TWINKLE_TOKEN` 留在 server 端,
+只把 `…/mcp/` 這個 URL 給 tester——tester 不必持有 token、不必自己跑常駐 process。
 
 ## Status
 

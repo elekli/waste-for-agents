@@ -1,6 +1,8 @@
-"""Chunk 5 Service 邏輯測試(不架 HTTP)。"""
+"""Chunk 5 Service 邏輯測試(不架 HTTP)+ Chunk 6 HTTP 端點接線測試。"""
 
-from waste_for_agents.server import Service
+from fastapi.testclient import TestClient
+
+from waste_for_agents.server import Service, build_app
 from waste_for_agents.store import Store
 
 
@@ -46,3 +48,23 @@ def test_delete_watch(tmp_path) -> None:
     assert svc.delete_watch(wid) == {"deleted": True}
     assert svc.delete_watch(wid) == {"deleted": False}
     assert svc.list_watches()["watches"] == []
+
+
+def test_http_health_and_changes(tmp_path) -> None:
+    store = Store.open(tmp_path / "w.db")
+    wid = store.create_watch("fake", {}, ["id"], [], 3600).id
+    e1 = store.append_event(wid, "added", "1", {"row": {"id": "1"}})
+
+    app = build_app(store, tick_s=3600.0)  # tick 大,測試期間 scheduler 不干擾
+    with TestClient(app) as client:
+        h = client.get("/health")
+        assert h.status_code == 200
+        assert h.json()["watches"] == 1
+
+        c = client.get("/changes")
+        assert c.status_code == 200
+        assert [e["id"] for e in c.json()["events"]] == [e1]
+
+        c2 = client.get("/changes", params={"since": e1})
+        assert c2.json()["events"] == []
+        assert c2.json()["cursor"] == e1

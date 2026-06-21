@@ -136,6 +136,11 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
     def health() -> dict[str, Any]:
         return {"status": "ok", "watches": len(store.list_watches())}
 
+    @app.get("/changes")
+    def changes(since: int | None = None) -> dict[str, Any]:
+        """list_changes 的唯讀 HTTP 鏡像,給 shell 端 SessionStart hook 用(read-free)。"""
+        return service.list_changes(since)
+
     app.mount("/mcp", mcp.streamable_http_app())
     return app
 
