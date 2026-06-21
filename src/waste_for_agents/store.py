@@ -17,6 +17,13 @@ from typing import Any
 
 Row = dict[str, Any]
 
+# 跨執行緒共用單一連線(scheduler + FastAPI route),要求 sqlite serialized 模式。
+# 非 serialized 的平台寧可 import 時 fail loud,也不要靜默資料競爭。
+assert sqlite3.threadsafety == 3, (
+    f"sqlite3.threadsafety={sqlite3.threadsafety} 非 serialized(3);"
+    "跨執行緒共用連線不安全"
+)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -81,7 +88,10 @@ class Store:
 
     @classmethod
     def open(cls, path: str | Path) -> Store:
-        conn = sqlite3.connect(str(path))
+        # check_same_thread=False:scheduler(event loop 執行緒)與 FastAPI sync
+        # route(threadpool 執行緒)共用同一連線。安全性依賴 sqlite serialized 模式
+        # (見 store 模組層的 threadsafety 斷言)。
+        conn = sqlite3.connect(str(path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.executescript(_SCHEMA)
         conn.commit()

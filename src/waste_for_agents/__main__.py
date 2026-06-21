@@ -1,20 +1,24 @@
-"""CLI 進入點。`waste-for-agents serve` 起 HTTP 常駐(Chunk 5 實作 serve)。"""
+"""CLI 進入點。`waste-for-agents serve` 起 HTTP 常駐 + 排程器。"""
 
 import argparse
-import sys
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="waste-for-agents")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("serve", help="起 MCP server(HTTP streamable，常駐排程器)")
+    p_serve = sub.add_parser("serve", help="起 MCP server(HTTP streamable，常駐排程器)")
+    p_serve.add_argument("--db", default="waste.db", help="SQLite 路徑")
+    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve.add_argument("--port", type=int, default=8848)
+    p_serve.add_argument("--tick", type=float, default=5.0, help="排程器 tick 秒數")
 
     args = parser.parse_args(argv)
 
     if args.command == "serve":
-        # Chunk 5 接上 server.serve()
-        print("serve 尚未實作(Chunk 5)", file=sys.stderr)
-        return 1
+        from .server import serve
+
+        serve(db_path=args.db, host=args.host, port=args.port, tick_s=args.tick)
+        return 0
 
     parser.print_help()
     return 0
