@@ -48,6 +48,12 @@ class Watch:
     created_at: str
     last_run_at: str | None
     last_error: str | None
+    source_kind: str = "dataset"
+    free_rounds: int = 2
+    delivered_rounds: int = 0
+    last_run_seq: int = 0
+    last_metered_run_seq: int = 0
+    api_key_id: str | None = None
 
 
 @dataclass
@@ -58,6 +64,7 @@ class ChangeEvent:
     row_key: str
     detail: Row
     created_at: str
+    run_seq: int = 0
 
 
 _SCHEMA = """
@@ -70,12 +77,26 @@ CREATE TABLE IF NOT EXISTS watches (
     interval_s    INTEGER NOT NULL,
     created_at    TEXT NOT NULL,
     last_run_at   TEXT,
-    last_error    TEXT
+    last_error    TEXT,
+    source_kind   TEXT NOT NULL DEFAULT 'dataset',
+    free_rounds   INTEGER NOT NULL DEFAULT 2,
+    delivered_rounds INTEGER NOT NULL DEFAULT 0,
+    last_run_seq  INTEGER NOT NULL DEFAULT 0,
+    last_metered_run_seq INTEGER NOT NULL DEFAULT 0,
+    api_key_id    TEXT
+);
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         TEXT PRIMARY KEY,
+    key_hash   TEXT NOT NULL,
+    tier       TEXT NOT NULL DEFAULT 'free',
+    rate_limit INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS snapshots (
     watch_id   TEXT PRIMARY KEY,
     rows_json  TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    norm_version TEXT
 );
 CREATE TABLE IF NOT EXISTS change_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,10 +104,26 @@ CREATE TABLE IF NOT EXISTS change_events (
     kind       TEXT NOT NULL,
     row_key    TEXT NOT NULL,
     detail_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    run_seq    INTEGER NOT NULL DEFAULT 0,
+    withheld   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_change_events_watch ON change_events(watch_id);
 """
+
+# 對既有 db 補欄位(ALTER TABLE ADD COLUMN;以 PRAGMA table_info 判斷已存在則 no-op)。
+# 新欄位皆有 DEFAULT,既有列自動補預設,不破壞舊資料。
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("watches", "source_kind", "TEXT NOT NULL DEFAULT 'dataset'"),
+    ("watches", "free_rounds", "INTEGER NOT NULL DEFAULT 2"),
+    ("watches", "delivered_rounds", "INTEGER NOT NULL DEFAULT 0"),
+    ("watches", "last_run_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("watches", "last_metered_run_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("watches", "api_key_id", "TEXT"),
+    ("snapshots", "norm_version", "TEXT"),
+    ("change_events", "run_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("change_events", "withheld", "INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 class Store:
@@ -102,8 +139,17 @@ class Store:
         conn = sqlite3.connect(str(path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.executescript(_SCHEMA)
+        cls._migrate(conn)
         conn.commit()
         return cls(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """對既有 db 補新欄位(idempotent)。"""
+        for table, column, decl in _MIGRATIONS:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         with self._lock:
@@ -118,6 +164,8 @@ class Store:
         key_columns: list[str],
         ignore_columns: list[str],
         interval_s: int,
+        source_kind: str = "dataset",
+        api_key_id: str | None = None,
     ) -> Watch:
         watch = Watch(
             id=uuid.uuid4().hex,
@@ -129,12 +177,15 @@ class Store:
             created_at=_now_iso(),
             last_run_at=None,
             last_error=None,
+            source_kind=source_kind,
+            api_key_id=api_key_id,
         )
         with self._lock:
             self.conn.execute(
                 "INSERT INTO watches (id, source, query_json, key_columns_json, "
-                "ignore_columns_json, interval_s, created_at, last_run_at, last_error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "ignore_columns_json, interval_s, created_at, last_run_at, last_error, "
+                "source_kind, free_rounds, delivered_rounds, last_run_seq, api_key_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     watch.id,
                     watch.source,
@@ -145,6 +196,11 @@ class Store:
                     watch.created_at,
                     watch.last_run_at,
                     watch.last_error,
+                    watch.source_kind,
+                    watch.free_rounds,
+                    watch.delivered_rounds,
+                    watch.last_run_seq,
+                    watch.api_key_id,
                 ),
             )
             self.conn.commit()
@@ -189,11 +245,17 @@ class Store:
         snapshot_rows: list[Row],
         events: list[EventTuple],
         last_error: str | None,
+        run_seq: int = 0,
+        norm_version: str | None = None,
     ) -> None:
         """一次成功 run 的原子提交:寫所有 events + 更新 snapshot + mark_run,單一交易。
 
         關鍵:snapshot 只在 events 同一交易內前進——中途失敗則整批 rollback,下輪重抓
         重 diff 對「舊」baseline,絕不靜默漏報。
+
+        run_seq:本輪計費輪序號(rolling 路徑用)。>0 時推進 watches.last_run_seq;
+        =0(預設,dataset 或 F5 re-baseline 空輪)不推進。所有本輪 events 寫此 run_seq。
+        norm_version:rolling 的正規化版本戳,存進 snapshot(供 F5 版本不符偵測)。
         """
         now = _now_iso()
         with self._lock:
@@ -201,19 +263,22 @@ class Store:
                 for kind, key, detail in events:
                     self.conn.execute(
                         "INSERT INTO change_events "
-                        "(watch_id, kind, row_key, detail_json, created_at) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (watch_id, kind, key, json.dumps(detail), now),
+                        "(watch_id, kind, row_key, detail_json, created_at, run_seq) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (watch_id, kind, key, json.dumps(detail), now, run_seq),
                     )
                 self.conn.execute(
-                    "INSERT INTO snapshots (watch_id, rows_json, updated_at) "
-                    "VALUES (?, ?, ?) ON CONFLICT(watch_id) DO UPDATE SET "
-                    "rows_json = excluded.rows_json, updated_at = excluded.updated_at",
-                    (watch_id, json.dumps(snapshot_rows), now),
+                    "INSERT INTO snapshots (watch_id, rows_json, updated_at, norm_version) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT(watch_id) DO UPDATE SET "
+                    "rows_json = excluded.rows_json, updated_at = excluded.updated_at, "
+                    "norm_version = excluded.norm_version",
+                    (watch_id, json.dumps(snapshot_rows), now, norm_version),
                 )
                 self.conn.execute(
-                    "UPDATE watches SET last_run_at = ?, last_error = ? WHERE id = ?",
-                    (now, last_error, watch_id),
+                    "UPDATE watches SET last_run_at = ?, last_error = ?, "
+                    "last_run_seq = CASE WHEN ? > last_run_seq THEN ? ELSE last_run_seq END "
+                    "WHERE id = ?",
+                    (now, last_error, run_seq, run_seq, watch_id),
                 )
                 self.conn.commit()
             except Exception:
@@ -235,6 +300,12 @@ class Store:
             created_at=row["created_at"],
             last_run_at=row["last_run_at"],
             last_error=row["last_error"],
+            source_kind=row["source_kind"],
+            free_rounds=row["free_rounds"],
+            delivered_rounds=row["delivered_rounds"],
+            last_run_seq=row["last_run_seq"],
+            last_metered_run_seq=row["last_metered_run_seq"],
+            api_key_id=row["api_key_id"],
         )
 
     # --- snapshots ---
@@ -248,6 +319,14 @@ class Store:
             return None
         rows: list[Row] = json.loads(row["rows_json"])
         return rows
+
+    def get_snapshot_norm_version(self, watch_id: str) -> str | None:
+        """回 snapshot 的正規化版本戳(供 rolling 的 F5 版本不符偵測)。無 snapshot 回 None。"""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT norm_version FROM snapshots WHERE watch_id = ?", (watch_id,)
+            ).fetchone()
+        return row["norm_version"] if row is not None else None
 
     def set_snapshot(self, watch_id: str, rows: list[Row]) -> None:
         with self._lock:
@@ -284,6 +363,125 @@ class Store:
         new_cursor = events[-1].id if events else after
         return events, new_cursor
 
+    # --- api_keys ---
+
+    def create_api_key(
+        self, key_hash: str, tier: str = "free", rate_limit: int = 0
+    ) -> str:
+        kid = uuid.uuid4().hex
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO api_keys (id, key_hash, tier, rate_limit, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (kid, key_hash, tier, rate_limit, _now_iso()),
+            )
+            self.conn.commit()
+        return kid
+
+    def get_api_key_tier(self, api_key_id: str) -> str | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT tier FROM api_keys WHERE id = ?", (api_key_id,)
+            ).fetchone()
+        return row["tier"] if row is not None else None
+
+    def set_api_key_tier(self, api_key_id: str, tier: str) -> None:
+        """調 key 的 tier(付費 = 設 paid;dogfood 手動)。"""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE api_keys SET tier = ? WHERE id = ?", (tier, api_key_id)
+            )
+            self.conn.commit()
+
+    # --- metering(計費 gate,C-stub)---
+
+    def meter_and_mark(
+        self, watch_id: str, events: list[ChangeEvent]
+    ) -> dict[int, bool]:
+        """對本批 events 做 per-watch 計費 gate,回 {run_seq: deliver}。
+
+        計費輪 = 產 ≥1 added 的 run_seq。前 free_rounds 輪 deliver,超額把該輪 added
+        事件標 withheld=1、deliver=False。靠持久 last_metered_run_seq 確保對「同批重
+        呼叫 / 游標重放」idempotent(run_seq <= 水位的輪不重計、維持先前決策)。
+        無 api_key 或 tier=paid → 全 deliver、不動 counter(不變式 8)。
+        """
+        with self._lock:
+            watch = self.get_watch(watch_id)
+            if watch is None:
+                return {}
+            by_round: dict[int, list[ChangeEvent]] = {}
+            for e in events:
+                by_round.setdefault(e.run_seq, []).append(e)
+
+            tier = (
+                self.get_api_key_tier(watch.api_key_id) if watch.api_key_id else None
+            )
+            if watch.api_key_id is None or tier == "paid":
+                return {rs: True for rs in by_round}
+
+            delivered = watch.delivered_rounds
+            watermark = watch.last_metered_run_seq
+            decisions: dict[int, bool] = {}
+            for rs in sorted(by_round):
+                billable = any(e.kind == "added" for e in by_round[rs])
+                if rs <= watermark:
+                    # 已計過:依現存 withheld 狀態回原決策,不動 counter(idempotent)
+                    if not billable:
+                        decisions[rs] = True
+                    else:
+                        wh = self.conn.execute(
+                            "SELECT withheld FROM change_events WHERE watch_id=? AND "
+                            "run_seq=? LIMIT 1",
+                            (watch_id, rs),
+                        ).fetchone()
+                        decisions[rs] = wh is None or wh["withheld"] == 0
+                    continue
+                # 新輪
+                if not billable:
+                    decisions[rs] = True
+                elif delivered < watch.free_rounds:
+                    decisions[rs] = True
+                    delivered += 1
+                else:
+                    # gated:整輪所有事件 withheld(否則同輪 modified 會被 stub 卻漏 replay)
+                    decisions[rs] = False
+                    self.conn.execute(
+                        "UPDATE change_events SET withheld=1 WHERE watch_id=? AND "
+                        "run_seq=?",
+                        (watch_id, rs),
+                    )
+            new_watermark = max([watermark, *by_round]) if by_round else watermark
+            self.conn.execute(
+                "UPDATE watches SET delivered_rounds=?, last_metered_run_seq=? "
+                "WHERE id=?",
+                (delivered, new_watermark, watch_id),
+            )
+            self.conn.commit()
+            return decisions
+
+    def withheld_events(self, watch_id: str) -> list[ChangeEvent]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM change_events WHERE watch_id=? AND withheld=1 ORDER BY id",
+                (watch_id,),
+            ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def claim_withheld(self, watch_id: str) -> list[ChangeEvent]:
+        """回 withheld 事件並翻 withheld=0(idempotent:再呼叫回空)。"""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM change_events WHERE watch_id=? AND withheld=1 ORDER BY id",
+                (watch_id,),
+            ).fetchall()
+            events = [self._row_to_event(r) for r in rows]
+            self.conn.execute(
+                "UPDATE change_events SET withheld=0 WHERE watch_id=? AND withheld=1",
+                (watch_id,),
+            )
+            self.conn.commit()
+        return events
+
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> ChangeEvent:
         detail: Row = json.loads(row["detail_json"])
@@ -294,4 +492,5 @@ class Store:
             row_key=row["row_key"],
             detail=detail,
             created_at=row["created_at"],
+            run_seq=row["run_seq"],
         )
