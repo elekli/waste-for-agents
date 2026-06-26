@@ -309,6 +309,14 @@ class Store:
         rows: list[Row] = json.loads(row["rows_json"])
         return rows
 
+    def get_snapshot_norm_version(self, watch_id: str) -> str | None:
+        """回 snapshot 的正規化版本戳(供 rolling 的 F5 版本不符偵測)。無 snapshot 回 None。"""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT norm_version FROM snapshots WHERE watch_id = ?", (watch_id,)
+            ).fetchone()
+        return row["norm_version"] if row is not None else None
+
     def set_snapshot(self, watch_id: str, rows: list[Row]) -> None:
         with self._lock:
             self.conn.execute(

@@ -13,9 +13,9 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from .diff import diff_rows, row_key
+from .diff import diff_rolling, diff_rows, row_key
 from .sources.base import Source, get_source
-from .store import EventTuple, Store, Watch
+from .store import EventTuple, Row, Store, Watch
 
 Resolve = Callable[[str], Source]
 
@@ -26,14 +26,26 @@ def _bound(text: str) -> str:
     return text if len(text) <= _MAX_ERROR_LEN else text[:_MAX_ERROR_LEN] + "…(truncated)"
 
 
-async def run_watch(store: Store, watch: Watch, resolve: Resolve = get_source) -> int:
-    """跑單一 watch,回新增 change_event 數。"""
+async def run_watch(
+    store: Store,
+    watch: Watch,
+    resolve: Resolve = get_source,
+    norm_version: str | None = None,
+) -> int:
+    """跑單一 watch,回新增 change_event 數。
+
+    norm_version:當前正規化版本戳(rolling 路徑用,偵測轉換器升級;見 F5)。
+    dataset 路徑忽略它。
+    """
     try:
         source = resolve(watch.source)
         rows = await source.fetch(watch.query)
     except Exception as exc:  # 具名記錄、不 re-raise(隔離其他 watch);不覆蓋 snapshot
         store.mark_run(watch.id, last_error=_bound(f"{type(exc).__name__}: {exc}"))
         return 0
+
+    if watch.source_kind == "rolling_window":
+        return _run_rolling(store, watch, rows, norm_version)
 
     old = store.get_snapshot(watch.id)
     if old is None:
@@ -52,6 +64,53 @@ async def run_watch(store: Store, watch: Watch, resolve: Resolve = get_source) -
 
     # 原子:events + snapshot 前進 + mark_run 單一交易,中途失敗整批 rollback(不漏報)
     store.record_run(watch.id, rows, events, None)
+    return len(events)
+
+
+def _run_rolling(
+    store: Store, watch: Watch, rows: list[Row], norm_version: str | None
+) -> int:
+    """rolling_window 路徑:added 對累積 seen-set 判、不產 removed、三態持久化。
+
+    baseline 非靜默(seen 空 → 全 added、計費輪 1)。三態:
+    ① 有 event → record_run 寫 events + snapshot,進 run_seq(計費輪)。
+    ② 0 event 但 seen 變或版本戳變(F5 re-baseline)→ record_run 更新 snapshot +
+       版本戳,不進 run_seq(否則新內容/版本戳永不落地、卡死)。
+    ③ 真 0 變化 → 只 mark_run 推進 last_run_at,不重寫 snapshot。
+    """
+    old_list = store.get_snapshot(watch.id)
+    seen: dict[str, Row] = (
+        {}
+        if old_list is None
+        else {row_key(r, watch.key_columns): r for r in old_list}
+    )
+    old_nv = store.get_snapshot_norm_version(watch.id)
+    suppress = old_nv is not None and norm_version is not None and old_nv != norm_version
+
+    result, new_seen = diff_rolling(
+        seen, rows, watch.key_columns, watch.ignore_columns, suppress
+    )
+    events: list[EventTuple] = []
+    for row in result.added:
+        events.append(("added", row_key(row, watch.key_columns), {"row": row}))
+    for mod in result.modified:
+        events.append(("modified", mod.key, {"changes": mod.changes}))
+    # rolling 抑制 removed:舊文滾出 ≠ 刪除
+
+    snapshot_list = list(new_seen.values())
+    if events:
+        store.record_run(
+            watch.id, snapshot_list, events, None,
+            run_seq=watch.last_run_seq + 1, norm_version=norm_version,
+        )
+    elif new_seen != seen or old_nv != norm_version:
+        # ② F5 re-baseline:0 event 但內容/版本戳變 → 持久化,不計輪
+        store.record_run(
+            watch.id, snapshot_list, [], None, run_seq=0, norm_version=norm_version
+        )
+    else:
+        # ③ 真 0 變化:只推進 last_run_at
+        store.mark_run(watch.id, None)
     return len(events)
 
 
