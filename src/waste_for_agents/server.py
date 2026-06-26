@@ -14,6 +14,7 @@ from typing import Any
 
 from .scheduler import scheduler_loop
 from .sources import base
+from .sources.http_json import HttpJsonSource
 from .sources.twinkle import TwinkleSource
 from .store import ChangeEvent, Store, Watch
 
@@ -155,10 +156,11 @@ def serve(
     port: int = 8848,
     tick_s: float = 5.0,
 ) -> None:
-    """起常駐 HTTP server。註冊 TwinkleSource、建 Store、跑 uvicorn。"""
+    """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。"""
     import uvicorn
 
     base.register("twinkle", TwinkleSource())
+    base.register("http_json", HttpJsonSource())
     store = Store.open(db_path)
     app = build_app(store, tick_s)
     uvicorn.run(app, host=host, port=port)
