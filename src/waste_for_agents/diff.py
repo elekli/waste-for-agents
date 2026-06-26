@@ -61,6 +61,34 @@ def _compare(old: Row, new: Row, ignore: set[str]) -> dict[str, list[Any]]:
     return changes
 
 
+def diff_rolling(
+    seen_state: dict[str, Row],
+    new_rows: list[Row],
+    key_columns: list[str],
+    ignore_columns: list[str],
+    suppress_content_modified: bool,
+) -> tuple[DiffResult, dict[str, Row]]:
+    """滾動窗口 diff:added 對累積 seen-state 判,不產 removed。
+
+    seen_state: {row_key: 最後已知 row}。回 (DiffResult, 更新後 seen_state)。
+    suppress_content_modified=True 時(F5 版本戳不符)不產 modified,但仍把
+    新內容併進 seen_state(silently re-baseline),避免轉換器升級偽報整片。
+    """
+    ignore = set(ignore_columns)
+    result = DiffResult()
+    new_seen = dict(seen_state)  # copy-on-write,不就地改入參
+    for row in new_rows:
+        k = row_key(row, key_columns)
+        if k not in seen_state:
+            result.added.append(row)
+        elif not suppress_content_modified:
+            changes = _compare(seen_state[k], row, ignore)
+            if changes:
+                result.modified.append(Modification(key=k, changes=changes))
+        new_seen[k] = row  # 一律更新最後已知內容(含 re-baseline 情形)
+    return result, new_seen
+
+
 def diff_rows(
     old_rows: list[Row],
     new_rows: list[Row],
