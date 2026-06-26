@@ -79,9 +79,17 @@ class Service:
         key_columns: list[str],
         ignore_columns: list[str],
         interval_s: int,
+        source_kind: str = "dataset",
+        api_key_id: str | None = None,
     ) -> dict[str, Any]:
         watch = self.store.create_watch(
-            source, query, key_columns, ignore_columns, interval_s
+            source,
+            query,
+            key_columns,
+            ignore_columns,
+            interval_s,
+            source_kind=source_kind,
+            api_key_id=api_key_id,
         )
         return {"watch_id": watch.id}
 
@@ -144,18 +152,36 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         key_columns: list[str],
         ignore_columns: list[str],
         interval_s: int = 300,
+        source_kind: str = "dataset",
+        api_key_id: str | None = None,
     ) -> dict[str, Any]:
-        """訂閱一個結構化來源的 query。回 {watch_id}。(write)"""
+        """訂閱一個結構化來源的 query。回 {watch_id}。(write)
+
+        source_kind:'dataset'(完整資料集)或 'rolling_window'(RSS;added 對
+        seen-set、不報 removed)。api_key_id:計費歸戶(free tier 觸發計費 gate)。
+        """
         # ⚠ 濫用面(MVP 缺口,開放給可信任 tester 以外前必補,見 TODOS.md / README 安全段):
         #   query 原樣透傳給 TwinkleSource → Twinkle query_rows 接受 raw SQL where/group_by。
         #   create_watch 因此 = 借用維運者 token 的「持久排程 raw-SQL 執行 primitive」。
-        #   目前無 query 驗證、無 rate-limit、無 interval 下限、無 source 白名單強制。
-        return service.create_watch(source, query, key_columns, ignore_columns, interval_s)
+        #   目前無 query 驗證、無 rate-limit、無 interval 下限、無 source 白名單強制(Chunk 5 補)。
+        return service.create_watch(
+            source, query, key_columns, ignore_columns, interval_s,
+            source_kind=source_kind, api_key_id=api_key_id,
+        )
 
     @mcp.tool()
     def list_changes(since_cursor: int | None = None) -> dict[str, Any]:
-        """拉自 since_cursor 以來的變化。回 {events, cursor};無變化回空。(read)"""
+        """拉自 since_cursor 以來的變化。回 {events, cursor};無變化回空。(read)
+
+        免費額度用完的 watch,其變化回 gated stub(含升級提示);付費後用
+        replay_watch 補拿。
+        """
         return service.list_changes(since_cursor)
+
+    @mcp.tool()
+    def replay_watch(watch_id: str) -> dict[str, Any]:
+        """付費後補拿某 watch 被保留(withheld)的變化。回 {events}(或 error)。(read)"""
+        return service.replay_watch(watch_id)
 
     @mcp.tool()
     def list_watches() -> dict[str, Any]:

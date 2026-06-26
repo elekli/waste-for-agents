@@ -169,3 +169,32 @@ def test_replay_watch_paid_then_idempotent(tmp_path):
     paid = svc.replay_watch(wa.id)
     assert {e["row_key"] for e in paid["events"]} == {'["a3"]'}  # 補拿真實事件
     assert svc.replay_watch(wa.id)["events"] == []  # 再呼叫回空(已 claim)
+
+
+def test_service_create_watch_persists_metering_params(tmp_path):
+    s = Store.open(tmp_path / "m.db")
+    kid = s.create_api_key(key_hash="h", tier="free")
+    svc = Service(s)
+    out = svc.create_watch(
+        "rss", {"url": "x"}, ["id"], [], 3600,
+        source_kind="rolling_window", api_key_id=kid,
+    )
+    w = s.get_watch(out["watch_id"])
+    assert w.source_kind == "rolling_window" and w.api_key_id == kid
+
+
+def test_changes_http_mirror_shares_gate(tmp_path):
+    # dual-entry:/changes 鏡像與 MCP list_changes 共用 gate(且持久水位不重計)
+    from fastapi.testclient import TestClient
+
+    from waste_for_agents.server import build_app
+
+    s = Store.open(tmp_path / "m.db")
+    _, wa = _free_key_watch(s)
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])
+    app = build_app(s, tick_s=3600.0)
+    with TestClient(app) as client:
+        res = client.get("/changes").json()
+    gated = [e for e in res["events"] if e.get("gated")]
+    assert len(gated) == 1 and gated[0]["row_key"] == '["a3"]'
