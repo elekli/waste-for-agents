@@ -56,12 +56,61 @@ X-Tristero-Status: Silent
 |------|------|------|
 | `create_watch(source, query, key_columns, ignore_columns, interval_s)` | write | 建立一個監看 |
 | `list_changes(since_cursor)` | read | 拉自游標以來的變化(無變化秒回 no-op) |
-| `list_watches()` | read | 列出監看 + 各自 status |
+| `list_watches()` | read | 列出監看 + 各自 status(含 `last_error`) |
 | `delete_watch(watch_id)` | write | 刪除監看 |
+
+唯讀 HTTP 鏡像:`GET /changes?since=<cursor>` 等價 `list_changes`,供 shell 端 hook 用(免 MCP handshake)。健康檢查 `GET /health`。
+
+## Quickstart — the drop
+
+```bash
+# 1. 起常駐服務(TwinkleSource 需要 token;1Password: op://employee/twinkle hub/token)
+export TWINKLE_TOKEN=...
+uv run python -m waste_for_agents serve --port 8848
+#    health:  curl http://127.0.0.1:8848/health        → {"status":"ok",...}
+#    mcp 端點: curl http://127.0.0.1:8848/mcp/           → 406(FastMCP 健康訊號)
+
+# 2. 把它加進 agent(Claude Code)
+claude mcp add --transport http waste http://127.0.0.1:8848/mcp/
+```
+
+接著在 agent 裡:
+
+```jsonc
+// 訂閱「立法院 11 屆議案的狀態」,忽略 timestamp 欄位的 churn
+create_watch(
+  source="twinkle",
+  query={ "dataset_id": "ly-bills",
+          "columns": ["議案編號","議案名稱","議案狀態"],
+          "where": "\"屆\"='11'", "limit": 200 },
+  key_columns=["議案編號"],
+  ignore_columns=["更新時間"],
+  interval_s=300)
+
+// 之後每次醒來:沉默,或一則降臨
+list_changes()            // → {"events":[...], "cursor": N}
+```
+
+**短命 agent(Claude Code session)** 用 SessionStart hook 開場拉一次:見
+[`examples/sessionstart-hook.sh`](examples/sessionstart-hook.sh)——它打 `/changes`、把變化注入 context、把游標存檔,沒變化就安靜。
+
+**給人試用的部署建議:** 由維運者常駐跑本服務、`TWINKLE_TOKEN` 留在 server 端,
+只把 `…/mcp/` 這個 URL 給 tester——tester 不必持有 token、不必自己跑常駐 process。
+
+## Security(MVP 邊界,先讀再對外)
+
+這是 MVP,對外開放前有幾個已知缺口(完整清單見 [`TODOS.md`](TODOS.md)):
+
+- **`create_watch` 是借用維運者 token 的「持久排程 raw-SQL 執行 primitive」。** `query` 原樣
+  透傳 Twinkle `query_rows`(接受 raw SQL),且無驗證 / 無 rate-limit / 無 interval 下限。
+  **只給可信任的人**,別把 `create_watch` 開放到公網。
+- **`/changes`、`/health` 無授權。** 預設只 bind `127.0.0.1`。若照上面建議由維運者代管而
+  **bind 非 loopback,務必擺在 Tailscale 或反向代理的 auth 之後**——否則所有被監看的 rows 外洩。
+- **錯誤訊息已 scrub token + 截長**(`last_error` 會經 `list_watches` / `/changes` 對外)。
 
 ## Status
 
-MVP 開發中。實作計畫見 [`docs/superpowers/plans/2026-06-21-custos-mvp.md`](docs/superpowers/plans/2026-06-21-custos-mvp.md)。
+MVP 開發中。實作計畫見 [`docs/superpowers/plans/2026-06-21-waste-for-agents-mvp.md`](docs/superpowers/plans/2026-06-21-waste-for-agents-mvp.md)。
 
 ## 開發
 
