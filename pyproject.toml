@@ -12,6 +12,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "httpx>=0.27",
+    # 精確 pin:正規化 determinism(F5);版本變動會經 norm_version 偵測並 re-baseline,
+    # 但 pin 避免非預期升級偽報整片 feed modified。升級時一併更新 norm_version 對照。
+    "feedparser==6.0.12",
+    "markdownify==1.2.2",
 ]
 
 [project.scripts]
