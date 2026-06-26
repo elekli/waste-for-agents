@@ -59,3 +59,11 @@ def test_non_feed_raises_named():
 def test_default_source_kind_rolling():
     # agent-first:RSS watch 不需 agent 知道要傳 rolling_window
     assert RssSource().default_source_kind == "rolling_window"
+
+
+def test_rss_source_registered():
+    from waste_for_agents.server import register_default_sources
+    from waste_for_agents.sources import base
+
+    register_default_sources()
+    assert isinstance(base.get_source("rss"), RssSource)

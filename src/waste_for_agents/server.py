@@ -15,8 +15,16 @@ from typing import Any
 from .scheduler import scheduler_loop
 from .sources import base
 from .sources.http_json import HttpJsonSource
+from .sources.rss import RssSource
 from .sources.twinkle import TwinkleSource
 from .store import ChangeEvent, Store, Watch
+
+
+def register_default_sources() -> None:
+    """註冊內建 source adapters(twinkle / http_json / rss)。"""
+    base.register("twinkle", TwinkleSource())
+    base.register("http_json", HttpJsonSource())
+    base.register("rss", RssSource())
 
 INSTRUCTIONS = (
     "waste-for-agents:給 AI agent 的結構化監看訂閱層(pull-first)。\n"
@@ -236,8 +244,7 @@ def serve(
     """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。"""
     import uvicorn
 
-    base.register("twinkle", TwinkleSource())
-    base.register("http_json", HttpJsonSource())
+    register_default_sources()
     store = Store.open(db_path)
     app = build_app(store, tick_s)
     uvicorn.run(app, host=host, port=port)
