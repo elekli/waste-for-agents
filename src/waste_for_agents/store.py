@@ -385,6 +385,14 @@ class Store:
             ).fetchone()
         return row["tier"] if row is not None else None
 
+    def set_api_key_tier(self, api_key_id: str, tier: str) -> None:
+        """調 key 的 tier(付費 = 設 paid;dogfood 手動)。"""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE api_keys SET tier = ? WHERE id = ?", (tier, api_key_id)
+            )
+            self.conn.commit()
+
     # --- metering(計費 gate,C-stub)---
 
     def meter_and_mark(
@@ -423,7 +431,7 @@ class Store:
                     else:
                         wh = self.conn.execute(
                             "SELECT withheld FROM change_events WHERE watch_id=? AND "
-                            "run_seq=? AND kind='added' LIMIT 1",
+                            "run_seq=? LIMIT 1",
                             (watch_id, rs),
                         ).fetchone()
                         decisions[rs] = wh is None or wh["withheld"] == 0
@@ -435,10 +443,11 @@ class Store:
                     decisions[rs] = True
                     delivered += 1
                 else:
+                    # gated:整輪所有事件 withheld(否則同輪 modified 會被 stub 卻漏 replay)
                     decisions[rs] = False
                     self.conn.execute(
                         "UPDATE change_events SET withheld=1 WHERE watch_id=? AND "
-                        "run_seq=? AND kind='added'",
+                        "run_seq=?",
                         (watch_id, rs),
                     )
             new_watermark = max([watermark, *by_round]) if by_round else watermark

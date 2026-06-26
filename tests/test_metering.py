@@ -5,6 +5,7 @@
 gate 只對「有 free-tier api_key」的 watch 生效;無 key/paid = 不計量。
 """
 
+from waste_for_agents.server import Service
 from waste_for_agents.store import Store
 
 
@@ -113,3 +114,58 @@ def test_claim_withheld_idempotent(tmp_path):
     assert {e.row_key for e in claimed} == {'["c"]'}
     assert s.claim_withheld(w.id) == []  # 第二次補拿回空(已 claim)
     assert s.withheld_events(w.id) == []  # 旗標已清
+
+
+# --- Service 層(C-stub gate + replay)---
+
+
+def test_list_changes_stubs_gated_delivers_others(tmp_path):
+    # 不變式 9:單一 watch 被 gate 不誤卡/誤丟其他 watch
+    s = Store.open(tmp_path / "m.db")
+    _, wa = _free_key_watch(s)  # A:free,輪 3 超額
+    wb = s.create_watch("rss", {}, ["id"], [], 3600, source_kind="rolling_window")  # B:無 key
+    _added_round(s, wa, 1, ["a1"])
+    _added_round(s, wa, 2, ["a2"])
+    _added_round(s, wa, 3, ["a3"])
+    _added_round(s, wb, 1, ["b1"])
+    svc = Service(s)
+    res = svc.list_changes(None)
+    # B 的事件原樣交付(不受 A 的 gate 影響)
+    b_evs = [e for e in res["events"] if e["watch_id"] == wb.id]
+    assert len(b_evs) == 1 and not b_evs[0].get("gated")
+    # A 輪 3 被 stub 化
+    a_gated = [e for e in res["events"] if e["watch_id"] == wa.id and e.get("gated")]
+    assert len(a_gated) == 1 and a_gated[0]["row_key"] == '["a3"]'
+    # A 輪 1、2 正常交付
+    a_ok = [
+        e for e in res["events"] if e["watch_id"] == wa.id and not e.get("gated")
+    ]
+    assert {e["row_key"] for e in a_ok} == {'["a1"]', '["a2"]'}
+    # 游標前進到含 stub 在內的最大 id(不卡 B)
+    assert res["cursor"] == max(e["id"] for e in res["events"])
+
+
+def test_replay_watch_rejects_unpaid_preserves_withheld(tmp_path):
+    # 不變式 7 邊界:未付費 replay 不得清掉 withheld(否則永久遺失)
+    s = Store.open(tmp_path / "m.db")
+    _, wa = _free_key_watch(s)
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])
+    svc = Service(s)
+    svc.list_changes(None)  # 輪 3 gated
+    rej = svc.replay_watch(wa.id)
+    assert rej["events"] == [] and rej.get("error")  # 拒絕
+    assert s.withheld_events(wa.id)  # 旗標未清(關鍵)
+
+
+def test_replay_watch_paid_then_idempotent(tmp_path):
+    s = Store.open(tmp_path / "m.db")
+    kid, wa = _free_key_watch(s)
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])
+    svc = Service(s)
+    svc.list_changes(None)  # 輪 3 gated
+    s.set_api_key_tier(kid, "paid")  # 付費
+    paid = svc.replay_watch(wa.id)
+    assert {e["row_key"] for e in paid["events"]} == {'["a3"]'}  # 補拿真實事件
+    assert svc.replay_watch(wa.id)["events"] == []  # 再呼叫回空(已 claim)

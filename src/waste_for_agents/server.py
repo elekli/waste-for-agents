@@ -33,6 +33,22 @@ def _event_dict(e: ChangeEvent) -> dict[str, Any]:
         "row_key": e.row_key,
         "detail": e.detail,
         "created_at": e.created_at,
+        "run_seq": e.run_seq,
+    }
+
+
+def _gated_stub(e: ChangeEvent) -> dict[str, Any]:
+    """C-stub:gated 事件不交付真實 detail,改回升級提示;原事件留 store(withheld)。"""
+    return {
+        "id": e.id,
+        "watch_id": e.watch_id,
+        "kind": e.kind,
+        "row_key": e.row_key,
+        "run_seq": e.run_seq,
+        "gated": True,
+        "message": (
+            "此 watch 免費額度用完;付費後呼叫 replay_watch(watch_id) 補拿被保留的變化。"
+        ),
     }
 
 
@@ -70,8 +86,38 @@ class Service:
         return {"watch_id": watch.id}
 
     def list_changes(self, since_cursor: int | None) -> dict[str, Any]:
+        """拉自游標以來的變化,套 per-watch 計費 gate(C-stub)。
+
+        gated 輪的事件換成升級 stub,游標仍含其 id 照常前進(不變式 9:不卡其他
+        watch)。計量靠持久水位 idempotent → `/changes` 鏡像共用此路徑亦不重計。
+        """
         events, cursor = self.store.events_since(since_cursor)
-        return {"events": [_event_dict(e) for e in events], "cursor": cursor}
+        by_watch: dict[str, list[ChangeEvent]] = {}
+        for e in events:
+            by_watch.setdefault(e.watch_id, []).append(e)
+        decisions: dict[str, dict[int, bool]] = {
+            wid: self.store.meter_and_mark(wid, evs) for wid, evs in by_watch.items()
+        }
+        out = [
+            _event_dict(e)
+            if decisions.get(e.watch_id, {}).get(e.run_seq, True)
+            else _gated_stub(e)
+            for e in events
+        ]
+        return {"events": out, "cursor": cursor}
+
+    def replay_watch(self, watch_id: str) -> dict[str, Any]:
+        """付費後補拿 withheld 變化。非 paid 直接拒絕,絕不 claim(否則旗標被清、遺失)。"""
+        watch = self.store.get_watch(watch_id)
+        if watch is None:
+            return {"events": [], "error": "watch not found"}
+        tier = (
+            self.store.get_api_key_tier(watch.api_key_id) if watch.api_key_id else None
+        )
+        if tier != "paid":
+            return {"events": [], "error": "watch 未付費;replay 需 tier=paid"}
+        events = self.store.claim_withheld(watch_id)
+        return {"events": [_event_dict(e) for e in events]}
 
     def list_watches(self) -> dict[str, Any]:
         return {"watches": [_watch_dict(w) for w in self.store.list_watches()]}
