@@ -171,12 +171,18 @@ def test_replay_watch_paid_then_idempotent(tmp_path):
     assert svc.replay_watch(wa.id)["events"] == []  # 再呼叫回空(已 claim)
 
 
-def test_service_create_watch_persists_metering_params(tmp_path):
+def test_service_create_watch_persists_metering_params(tmp_path, monkeypatch):
+    import waste_for_agents.discovery as disco
+
     s = Store.open(tmp_path / "m.db")
     kid = s.create_api_key(key_hash="h", tier="free")
     svc = Service(s)
+    # rss create 會走 discovery;mock 成「url 即 feed」避免真連網
+    monkeypatch.setattr(
+        disco, "_get", lambda url, headers: b'<rss version="2.0"><channel><title>t</title></channel></rss>'
+    )
     out = svc.create_watch(
-        "rss", {"url": "x"}, ["id"], [], 3600,
+        "rss", {"url": "https://x.com/feed"}, ["id"], [], 3600,
         source_kind="rolling_window", api_key_id=kid,
     )
     w = s.get_watch(out["watch_id"])

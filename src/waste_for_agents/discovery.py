@@ -40,19 +40,19 @@ def find_feed_link(html: str, base_url: str) -> str | None:
     return None
 
 
-async def _get(url: str, headers: dict[str, str]) -> bytes:
-    async with httpx.AsyncClient(
-        timeout=_DEFAULT_TIMEOUT, follow_redirects=True
-    ) as client:
-        resp = await client.get(url, headers=headers)
+def _get(url: str, headers: dict[str, str]) -> bytes:
+    # sync:discovery 是 create_watch 的一次性呼叫(非 scheduler 熱路徑);
+    # MCP sync tool 在 threadpool 執行,不擋 async scheduler loop。
+    with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
+        resp = client.get(url, headers=headers)
         resp.raise_for_status()
         return resp.content
 
 
-async def discover_feed(url: str, headers: dict[str, str] | None = None) -> str:
+def discover_feed(url: str, headers: dict[str, str] | None = None) -> str:
     """回可用的 feed url。url 即 feed → 原樣回;首頁 → 找 alternate link;皆無 → 拋。"""
     try:
-        content = await _get(url, headers or {})
+        content = _get(url, headers or {})
     except Exception as exc:
         raise FeedDiscoveryError(
             f"GET {url} 失敗:{type(exc).__name__}: {exc}"
