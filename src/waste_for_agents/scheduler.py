@@ -78,6 +78,11 @@ def _run_rolling(
        版本戳,不進 run_seq(否則新內容/版本戳永不落地、卡死)。
     ③ 真 0 變化 → 只 mark_run 推進 last_run_at,不重寫 snapshot。
     """
+    # 並行安全(multi-review Critical 1/3):snapshot / last_run_seq 的唯一 writer 是
+    # scheduler 這條 asyncio loop,且 _run_rolling 為同步函式(無 await)→ read-diff-write
+    # 對 event loop 原子,FastAPI threadpool 的 list_changes 不碰這些欄位。故無 race。
+    # ⚠ 遷 Postgres / 多實例時失效:屆時 run_seq 須在 record_run 交易內原子產生
+    #   (見計畫未決清單「gate 原子性」)。
     old_list = store.get_snapshot(watch.id)
     seen: dict[str, Row] = (
         {}

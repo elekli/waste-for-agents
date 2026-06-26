@@ -115,7 +115,12 @@ class Service:
         return {"events": out, "cursor": cursor}
 
     def replay_watch(self, watch_id: str) -> dict[str, Any]:
-        """付費後補拿 withheld 變化。非 paid 直接拒絕,絕不 claim(否則旗標被清、遺失)。"""
+        """付費後補拿 withheld 變化。非 paid 直接拒絕,絕不 claim(否則旗標被清、遺失)。
+
+        ⚠ 認證缺口(multi-review Critical 2,Chunk 5/THE-10 必補):目前只驗 tier=paid,
+          未驗呼叫者「擁有」該 watch 的 api_key。auth middleware 上線後,replay 必須
+          比對呼叫者身份 == watch.api_key_id,否則知道 watch_id 即可竊取他人 withheld 變化。
+        """
         watch = self.store.get_watch(watch_id)
         if watch is None:
             return {"events": [], "error": "watch not found"}

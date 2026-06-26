@@ -77,8 +77,10 @@ def diff_rolling(
     ignore = set(ignore_columns)
     result = DiffResult()
     new_seen = dict(seen_state)  # copy-on-write,不就地改入參
-    for row in new_rows:
-        k = row_key(row, key_columns)
+    # 先依 key dedupe(同批重複 key:last wins,對齊 diff_rows 的 _index),
+    # 否則畸形 feed 的重複 key 會被多次判 added。
+    deduped = _index(new_rows, key_columns)
+    for k, row in deduped.items():
         if k not in seen_state:
             result.added.append(row)
         elif not suppress_content_modified:

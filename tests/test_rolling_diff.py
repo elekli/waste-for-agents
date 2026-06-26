@@ -56,6 +56,15 @@ def test_reappearance_with_edit_is_modified():
     assert res.modified[0].changes["title"] == ["A", "A2"]
 
 
+def test_duplicate_keys_in_batch_single_added():
+    # 畸形 feed:同一批兩列同 key → 只報一次 added(不重複計),last wins(對齊 diff_rows)
+    res, seen = diff_rolling(
+        {}, [{"id": "a", "title": "1"}, {"id": "a", "title": "2"}], KEY, [], False
+    )
+    assert len(res.added) == 1
+    assert seen['["a"]']["title"] == "2"
+
+
 def test_suppress_content_modified_rebaselines_silently():
     # F5:版本戳不符 → 內容變不報 modified,但 seen-set 仍更新成新內容
     _, seen = diff_rolling({}, _rows(("a", "A")), KEY, [], False)
