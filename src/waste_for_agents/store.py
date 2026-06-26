@@ -48,6 +48,11 @@ class Watch:
     created_at: str
     last_run_at: str | None
     last_error: str | None
+    source_kind: str = "dataset"
+    free_rounds: int = 2
+    delivered_rounds: int = 0
+    last_run_seq: int = 0
+    api_key_id: str | None = None
 
 
 @dataclass
@@ -58,6 +63,7 @@ class ChangeEvent:
     row_key: str
     detail: Row
     created_at: str
+    run_seq: int = 0
 
 
 _SCHEMA = """
@@ -70,12 +76,18 @@ CREATE TABLE IF NOT EXISTS watches (
     interval_s    INTEGER NOT NULL,
     created_at    TEXT NOT NULL,
     last_run_at   TEXT,
-    last_error    TEXT
+    last_error    TEXT,
+    source_kind   TEXT NOT NULL DEFAULT 'dataset',
+    free_rounds   INTEGER NOT NULL DEFAULT 2,
+    delivered_rounds INTEGER NOT NULL DEFAULT 0,
+    last_run_seq  INTEGER NOT NULL DEFAULT 0,
+    api_key_id    TEXT
 );
 CREATE TABLE IF NOT EXISTS snapshots (
     watch_id   TEXT PRIMARY KEY,
     rows_json  TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    norm_version TEXT
 );
 CREATE TABLE IF NOT EXISTS change_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,10 +95,25 @@ CREATE TABLE IF NOT EXISTS change_events (
     kind       TEXT NOT NULL,
     row_key    TEXT NOT NULL,
     detail_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    run_seq    INTEGER NOT NULL DEFAULT 0,
+    withheld   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_change_events_watch ON change_events(watch_id);
 """
+
+# 對既有 db 補欄位(ALTER TABLE ADD COLUMN;以 PRAGMA table_info 判斷已存在則 no-op)。
+# 新欄位皆有 DEFAULT,既有列自動補預設,不破壞舊資料。
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("watches", "source_kind", "TEXT NOT NULL DEFAULT 'dataset'"),
+    ("watches", "free_rounds", "INTEGER NOT NULL DEFAULT 2"),
+    ("watches", "delivered_rounds", "INTEGER NOT NULL DEFAULT 0"),
+    ("watches", "last_run_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("watches", "api_key_id", "TEXT"),
+    ("snapshots", "norm_version", "TEXT"),
+    ("change_events", "run_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("change_events", "withheld", "INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 class Store:
@@ -102,8 +129,17 @@ class Store:
         conn = sqlite3.connect(str(path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.executescript(_SCHEMA)
+        cls._migrate(conn)
         conn.commit()
         return cls(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """對既有 db 補新欄位(idempotent)。"""
+        for table, column, decl in _MIGRATIONS:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         with self._lock:
@@ -118,6 +154,8 @@ class Store:
         key_columns: list[str],
         ignore_columns: list[str],
         interval_s: int,
+        source_kind: str = "dataset",
+        api_key_id: str | None = None,
     ) -> Watch:
         watch = Watch(
             id=uuid.uuid4().hex,
@@ -129,12 +167,15 @@ class Store:
             created_at=_now_iso(),
             last_run_at=None,
             last_error=None,
+            source_kind=source_kind,
+            api_key_id=api_key_id,
         )
         with self._lock:
             self.conn.execute(
                 "INSERT INTO watches (id, source, query_json, key_columns_json, "
-                "ignore_columns_json, interval_s, created_at, last_run_at, last_error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "ignore_columns_json, interval_s, created_at, last_run_at, last_error, "
+                "source_kind, free_rounds, delivered_rounds, last_run_seq, api_key_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     watch.id,
                     watch.source,
@@ -145,6 +186,11 @@ class Store:
                     watch.created_at,
                     watch.last_run_at,
                     watch.last_error,
+                    watch.source_kind,
+                    watch.free_rounds,
+                    watch.delivered_rounds,
+                    watch.last_run_seq,
+                    watch.api_key_id,
                 ),
             )
             self.conn.commit()
@@ -189,11 +235,17 @@ class Store:
         snapshot_rows: list[Row],
         events: list[EventTuple],
         last_error: str | None,
+        run_seq: int = 0,
+        norm_version: str | None = None,
     ) -> None:
         """一次成功 run 的原子提交:寫所有 events + 更新 snapshot + mark_run,單一交易。
 
         關鍵:snapshot 只在 events 同一交易內前進——中途失敗則整批 rollback,下輪重抓
         重 diff 對「舊」baseline,絕不靜默漏報。
+
+        run_seq:本輪計費輪序號(rolling 路徑用)。>0 時推進 watches.last_run_seq;
+        =0(預設,dataset 或 F5 re-baseline 空輪)不推進。所有本輪 events 寫此 run_seq。
+        norm_version:rolling 的正規化版本戳,存進 snapshot(供 F5 版本不符偵測)。
         """
         now = _now_iso()
         with self._lock:
@@ -201,19 +253,22 @@ class Store:
                 for kind, key, detail in events:
                     self.conn.execute(
                         "INSERT INTO change_events "
-                        "(watch_id, kind, row_key, detail_json, created_at) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (watch_id, kind, key, json.dumps(detail), now),
+                        "(watch_id, kind, row_key, detail_json, created_at, run_seq) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (watch_id, kind, key, json.dumps(detail), now, run_seq),
                     )
                 self.conn.execute(
-                    "INSERT INTO snapshots (watch_id, rows_json, updated_at) "
-                    "VALUES (?, ?, ?) ON CONFLICT(watch_id) DO UPDATE SET "
-                    "rows_json = excluded.rows_json, updated_at = excluded.updated_at",
-                    (watch_id, json.dumps(snapshot_rows), now),
+                    "INSERT INTO snapshots (watch_id, rows_json, updated_at, norm_version) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT(watch_id) DO UPDATE SET "
+                    "rows_json = excluded.rows_json, updated_at = excluded.updated_at, "
+                    "norm_version = excluded.norm_version",
+                    (watch_id, json.dumps(snapshot_rows), now, norm_version),
                 )
                 self.conn.execute(
-                    "UPDATE watches SET last_run_at = ?, last_error = ? WHERE id = ?",
-                    (now, last_error, watch_id),
+                    "UPDATE watches SET last_run_at = ?, last_error = ?, "
+                    "last_run_seq = CASE WHEN ? > last_run_seq THEN ? ELSE last_run_seq END "
+                    "WHERE id = ?",
+                    (now, last_error, run_seq, run_seq, watch_id),
                 )
                 self.conn.commit()
             except Exception:
@@ -235,6 +290,11 @@ class Store:
             created_at=row["created_at"],
             last_run_at=row["last_run_at"],
             last_error=row["last_error"],
+            source_kind=row["source_kind"],
+            free_rounds=row["free_rounds"],
+            delivered_rounds=row["delivered_rounds"],
+            last_run_seq=row["last_run_seq"],
+            api_key_id=row["api_key_id"],
         )
 
     # --- snapshots ---
@@ -294,4 +354,5 @@ class Store:
             row_key=row["row_key"],
             detail=detail,
             created_at=row["created_at"],
+            run_seq=row["run_seq"],
         )
