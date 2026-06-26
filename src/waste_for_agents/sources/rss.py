@@ -21,6 +21,7 @@ from typing import Any
 import feedparser
 import httpx
 
+from ..netguard import UnsafeUrlError, check_outbound_url
 from ..normalize import html_to_markdown
 from .base import Row
 
@@ -46,8 +47,11 @@ def _stable_id(entry: Any) -> str:
         return str(entry["id"])
     if entry.get("link"):
         return str(entry["link"])
-    basis = f"{entry.get('title', '')}\x00{entry.get('published', '')}"
-    return "hash:" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
+    # 皆無:用 title+published+summary 當基底,全長 hash(避免高熵不足的碰撞;multi-review)。
+    basis = "\x00".join(
+        str(entry.get(k, "")) for k in ("title", "published", "summary")
+    )
+    return "hash:" + hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 
 def _content_html(entry: Any) -> str:
@@ -73,7 +77,11 @@ def _entry_to_row(entry: Any) -> Row:
 
 
 def parse_feed(content: bytes) -> list[Row]:
-    """bytes → list[Row](固定 schema)。無法解析為 feed 且無條目 → RssFetchError。"""
+    """bytes → list[Row](固定 schema)。
+
+    錯誤邊界:bozo(格式有瑕疵)**且** 0 條目 → RssFetchError;bozo 但仍有條目 →
+    寬鬆保留(feedparser 對小瑕疵常設 bozo,有可用條目就用);valid 空 feed → []。
+    """
     parsed = feedparser.parse(content)
     if parsed.bozo and not parsed.entries:
         raise RssFetchError(
@@ -95,6 +103,10 @@ class RssSource:
         url = query.get("url")
         if not isinstance(url, str) or not url:
             raise RssFetchError("query.url 必填且須為非空字串")
+        try:
+            check_outbound_url(url)  # SSRF 閘(見 netguard 的未完成項)
+        except UnsafeUrlError as exc:
+            raise RssFetchError(str(exc)) from exc
         headers = query.get("headers") or {}
         try:
             async with httpx.AsyncClient(

@@ -1102,6 +1102,7 @@ name = "waste-for-agents"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "beautifulsoup4" },
     { name = "fastapi" },
     { name = "feedparser" },
     { name = "httpx" },
@@ -1120,6 +1121,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "feedparser", specifier = "==6.0.12" },
     { name = "httpx", specifier = ">=0.27" },

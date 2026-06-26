@@ -25,5 +25,6 @@ def test_html_to_markdown_strips_tags():
 def test_norm_version_stable_and_contains_versions():
     v = norm_version()
     assert v == norm_version()  # 穩定
-    assert "fp" in v and "md" in v  # 含 feedparser + markdownify 版本標記
-    assert "6.0.12" in v and "1.2.2" in v  # pin 的精確版
+    assert "fp" in v and "md" in v and "bs4" in v  # 含三個影響輸出的元件
+    # 與 pyproject 的 pin 同步——升版時一起改(故意硬編,當 pin 偏移的回歸警報)
+    assert "6.0.12" in v and "1.2.2" in v and "4.15.0" in v

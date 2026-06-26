@@ -16,6 +16,8 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup
 
+from .netguard import check_outbound_url
+
 _DEFAULT_TIMEOUT = 10.0
 _FEED_TYPES = {"application/rss+xml", "application/atom+xml"}
 
@@ -43,6 +45,7 @@ def find_feed_link(html: str, base_url: str) -> str | None:
 def _get(url: str, headers: dict[str, str]) -> bytes:
     # sync:discovery 是 create_watch 的一次性呼叫(非 scheduler 熱路徑);
     # MCP sync tool 在 threadpool 執行,不擋 async scheduler loop。
+    check_outbound_url(url)  # SSRF 閘(見 netguard 的未完成項)
     with httpx.Client(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
         resp = client.get(url, headers=headers)
         resp.raise_for_status()

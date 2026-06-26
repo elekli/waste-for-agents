@@ -23,5 +23,13 @@ def html_to_markdown(html: str) -> str:
 
 
 def norm_version() -> str:
-    """正規化版本戳:含 markdownify + feedparser 精確版(F5 偵測升級)。"""
-    return f"md{version('markdownify')}+fp{version('feedparser')}"
+    """正規化版本戳:含所有影響輸出的元件精確版(F5 偵測升級)。
+
+    含 beautifulsoup4——它是 markdownify 的 transitive 依賴、會影響 MD 輸出;漏掉它
+    則 bs4 升級會繞過 F5 偵測(multi-review Important)。新增任何影響輸出的依賴都要加進來。
+    """
+    return (
+        f"md{version('markdownify')}"
+        f"+fp{version('feedparser')}"
+        f"+bs4{version('beautifulsoup4')}"
+    )

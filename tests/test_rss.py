@@ -1,8 +1,23 @@
 """RSS adapter:feedparser → 穩定 id → 固定 schema rows(decisions 2-4, 6)。"""
 
+import asyncio
+import socket
+
 import pytest
 
 from waste_for_agents.sources.rss import RssFetchError, RssSource, parse_feed
+
+ATOM = b"""<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>A</title>
+  <entry>
+    <id>urn:uuid:abc-123</id>
+    <title>Atom Post \xe4\xb8\xad\xe6\x96\x87</title>
+    <link href="https://x.com/atom/1"/>
+    <updated>2026-01-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;body&lt;/p&gt;</content>
+  </entry>
+</feed>"""
 
 RSS = b"""<?xml version="1.0"?>
 <rss version="2.0"><channel><title>T</title>
@@ -67,3 +82,19 @@ def test_rss_source_registered():
 
     register_default_sources()
     assert isinstance(base.get_source("rss"), RssSource)
+
+
+def test_parse_atom_feed():
+    rows = parse_feed(ATOM)
+    assert len(rows) == 1
+    assert rows[0]["id"] == "urn:uuid:abc-123"  # atom:id(feedparser 統一到 .id)
+    assert rows[0]["link"] == "https://x.com/atom/1"
+    assert "中文" in rows[0]["title"]  # UTF-8 多位元組保留
+    assert "body" in rows[0]["content"]
+
+
+def test_fetch_rejects_internal_url(monkeypatch):
+    # SSRF 閘:解析到 loopback → RssFetchError(不真連)
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("127.0.0.1", 0))])
+    with pytest.raises(RssFetchError):
+        asyncio.run(RssSource().fetch({"url": "http://localhost/feed"}))
