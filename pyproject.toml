@@ -44,3 +44,8 @@ line-length = 100
 python_version = "3.12"
 strict = true
 files = ["src"]
+
+# feedparser 不附 py.typed / 無官方 stub:忽略其缺型別(adapter 內已把回傳全 stringify)。
+[[tool.mypy.overrides]]
+module = ["feedparser"]
+ignore_missing_imports = true
