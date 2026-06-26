@@ -52,6 +52,7 @@ class Watch:
     free_rounds: int = 2
     delivered_rounds: int = 0
     last_run_seq: int = 0
+    last_metered_run_seq: int = 0
     api_key_id: str | None = None
 
 
@@ -81,7 +82,15 @@ CREATE TABLE IF NOT EXISTS watches (
     free_rounds   INTEGER NOT NULL DEFAULT 2,
     delivered_rounds INTEGER NOT NULL DEFAULT 0,
     last_run_seq  INTEGER NOT NULL DEFAULT 0,
+    last_metered_run_seq INTEGER NOT NULL DEFAULT 0,
     api_key_id    TEXT
+);
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         TEXT PRIMARY KEY,
+    key_hash   TEXT NOT NULL,
+    tier       TEXT NOT NULL DEFAULT 'free',
+    rate_limit INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS snapshots (
     watch_id   TEXT PRIMARY KEY,
@@ -109,6 +118,7 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
     ("watches", "free_rounds", "INTEGER NOT NULL DEFAULT 2"),
     ("watches", "delivered_rounds", "INTEGER NOT NULL DEFAULT 0"),
     ("watches", "last_run_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("watches", "last_metered_run_seq", "INTEGER NOT NULL DEFAULT 0"),
     ("watches", "api_key_id", "TEXT"),
     ("snapshots", "norm_version", "TEXT"),
     ("change_events", "run_seq", "INTEGER NOT NULL DEFAULT 0"),
@@ -294,6 +304,7 @@ class Store:
             free_rounds=row["free_rounds"],
             delivered_rounds=row["delivered_rounds"],
             last_run_seq=row["last_run_seq"],
+            last_metered_run_seq=row["last_metered_run_seq"],
             api_key_id=row["api_key_id"],
         )
 
@@ -351,6 +362,116 @@ class Store:
         events = [self._row_to_event(r) for r in rows]
         new_cursor = events[-1].id if events else after
         return events, new_cursor
+
+    # --- api_keys ---
+
+    def create_api_key(
+        self, key_hash: str, tier: str = "free", rate_limit: int = 0
+    ) -> str:
+        kid = uuid.uuid4().hex
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO api_keys (id, key_hash, tier, rate_limit, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (kid, key_hash, tier, rate_limit, _now_iso()),
+            )
+            self.conn.commit()
+        return kid
+
+    def get_api_key_tier(self, api_key_id: str) -> str | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT tier FROM api_keys WHERE id = ?", (api_key_id,)
+            ).fetchone()
+        return row["tier"] if row is not None else None
+
+    # --- metering(計費 gate,C-stub)---
+
+    def meter_and_mark(
+        self, watch_id: str, events: list[ChangeEvent]
+    ) -> dict[int, bool]:
+        """對本批 events 做 per-watch 計費 gate,回 {run_seq: deliver}。
+
+        計費輪 = 產 ≥1 added 的 run_seq。前 free_rounds 輪 deliver,超額把該輪 added
+        事件標 withheld=1、deliver=False。靠持久 last_metered_run_seq 確保對「同批重
+        呼叫 / 游標重放」idempotent(run_seq <= 水位的輪不重計、維持先前決策)。
+        無 api_key 或 tier=paid → 全 deliver、不動 counter(不變式 8)。
+        """
+        with self._lock:
+            watch = self.get_watch(watch_id)
+            if watch is None:
+                return {}
+            by_round: dict[int, list[ChangeEvent]] = {}
+            for e in events:
+                by_round.setdefault(e.run_seq, []).append(e)
+
+            tier = (
+                self.get_api_key_tier(watch.api_key_id) if watch.api_key_id else None
+            )
+            if watch.api_key_id is None or tier == "paid":
+                return {rs: True for rs in by_round}
+
+            delivered = watch.delivered_rounds
+            watermark = watch.last_metered_run_seq
+            decisions: dict[int, bool] = {}
+            for rs in sorted(by_round):
+                billable = any(e.kind == "added" for e in by_round[rs])
+                if rs <= watermark:
+                    # 已計過:依現存 withheld 狀態回原決策,不動 counter(idempotent)
+                    if not billable:
+                        decisions[rs] = True
+                    else:
+                        wh = self.conn.execute(
+                            "SELECT withheld FROM change_events WHERE watch_id=? AND "
+                            "run_seq=? AND kind='added' LIMIT 1",
+                            (watch_id, rs),
+                        ).fetchone()
+                        decisions[rs] = wh is None or wh["withheld"] == 0
+                    continue
+                # 新輪
+                if not billable:
+                    decisions[rs] = True
+                elif delivered < watch.free_rounds:
+                    decisions[rs] = True
+                    delivered += 1
+                else:
+                    decisions[rs] = False
+                    self.conn.execute(
+                        "UPDATE change_events SET withheld=1 WHERE watch_id=? AND "
+                        "run_seq=? AND kind='added'",
+                        (watch_id, rs),
+                    )
+            new_watermark = max([watermark, *by_round]) if by_round else watermark
+            self.conn.execute(
+                "UPDATE watches SET delivered_rounds=?, last_metered_run_seq=? "
+                "WHERE id=?",
+                (delivered, new_watermark, watch_id),
+            )
+            self.conn.commit()
+            return decisions
+
+    def withheld_events(self, watch_id: str) -> list[ChangeEvent]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM change_events WHERE watch_id=? AND withheld=1 ORDER BY id",
+                (watch_id,),
+            ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def claim_withheld(self, watch_id: str) -> list[ChangeEvent]:
+        """回 withheld 事件並翻 withheld=0(idempotent:再呼叫回空)。"""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM change_events WHERE watch_id=? AND withheld=1 ORDER BY id",
+                (watch_id,),
+            ).fetchall()
+            events = [self._row_to_event(r) for r in rows]
+            self.conn.execute(
+                "UPDATE change_events SET withheld=0 WHERE watch_id=? AND withheld=1",
+                (watch_id,),
+            )
+            self.conn.commit()
+        return events
 
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> ChangeEvent:
