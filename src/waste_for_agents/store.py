@@ -57,6 +57,13 @@ class Watch:
 
 
 @dataclass
+class ApiKey:
+    id: str
+    tier: str
+    rate_limit: int
+
+
+@dataclass
 class ChangeEvent:
     id: int
     watch_id: str
@@ -220,6 +227,33 @@ class Store:
             ).fetchall()
         return [self._row_to_watch(r) for r in rows]
 
+    def list_watches_by_api_key(self, api_key_id: str | None) -> list[Watch]:
+        """只取某 api_key 歸戶的 watch(None = 無歸戶;用 IS NULL,避免 = NULL 永不命中)。"""
+        with self._lock:
+            if api_key_id is None:
+                rows = self.conn.execute(
+                    "SELECT * FROM watches WHERE api_key_id IS NULL ORDER BY created_at"
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM watches WHERE api_key_id = ? ORDER BY created_at",
+                    (api_key_id,),
+                ).fetchall()
+        return [self._row_to_watch(r) for r in rows]
+
+    def list_watch_ids_by_api_key(self, api_key_id: str | None) -> set[str]:
+        """某 api_key 歸戶的 watch id 集合(scope 過濾用,避免全表載入 + 記憶體過濾)。"""
+        with self._lock:
+            if api_key_id is None:
+                rows = self.conn.execute(
+                    "SELECT id FROM watches WHERE api_key_id IS NULL"
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT id FROM watches WHERE api_key_id = ?", (api_key_id,)
+                ).fetchall()
+        return {r["id"] for r in rows}
+
     def delete_watch(self, watch_id: str) -> bool:
         with self._lock:
             cur = self.conn.execute("DELETE FROM watches WHERE id = ?", (watch_id,))
@@ -377,6 +411,27 @@ class Store:
             )
             self.conn.commit()
         return kid
+
+    def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None:
+        """以 key 雜湊查 api_key(認證入口)。查無回 None。"""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, tier, rate_limit FROM api_keys WHERE key_hash = ?",
+                (key_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ApiKey(id=row["id"], tier=row["tier"], rate_limit=row["rate_limit"])
+
+    def get_api_key(self, api_key_id: str) -> ApiKey | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, tier, rate_limit FROM api_keys WHERE id = ?",
+                (api_key_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ApiKey(id=row["id"], tier=row["tier"], rate_limit=row["rate_limit"])
 
     def get_api_key_tier(self, api_key_id: str) -> str | None:
         with self._lock:

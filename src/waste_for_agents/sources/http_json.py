@@ -15,8 +15,8 @@ query 語意(dict):
 不因 JSON 數字型別在兩次抓取間漂移(int vs str)而誤報。除 stringify 外不做任何
 數字↔字串語意轉換,保留前導零識別碼等原貌。
 
-⚠ SSRF:此 adapter 會 GET 任意 query.url。對外開放前必須加 allowlist / 內網位址
-阻擋(見 TODOS.md)。目前僅供 MVP / 受信任 client 使用。
+SSRF:此 adapter 會 GET 任意 query.url,故經 netguard.guarded_get(scheme/內網/
+metadata 阻擋 + redirect 逐跳重驗 + 出站 header allowlist),與 rss/discovery 一致。
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from typing import Any
 
 import httpx
 
+from ..netguard import UnsafeUrlError, guarded_get
 from .base import Row
 
 _MAX_ERROR_LEN = 1000
@@ -96,12 +97,17 @@ class HttpJsonSource:
         records_path = query.get("records_path")
         if records_path is not None and not isinstance(records_path, str):
             raise HttpJsonFetchError("query.records_path 須為字串或省略")
-        headers = query.get("headers") or {}
+        headers = query.get("headers")
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(url, headers=headers)
+            # follow_redirects=False:guarded_get 逐跳重驗 + header allowlist(SSRF)。
+            async with httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=False
+            ) as client:
+                resp = await guarded_get(client, url, headers)
                 resp.raise_for_status()
                 payload = resp.json()
+        except UnsafeUrlError as exc:  # SSRF 閘擋下 → 具名
+            raise HttpJsonFetchError(str(exc)) from exc
         except HttpJsonFetchError:
             raise
         except Exception as exc:  # 連線/狀態/解碼層失敗 → 具名 + 截長

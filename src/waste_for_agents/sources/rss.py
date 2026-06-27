@@ -21,7 +21,7 @@ from typing import Any
 import feedparser
 import httpx
 
-from ..netguard import UnsafeUrlError, check_outbound_url
+from ..netguard import UnsafeUrlError, guarded_get
 from ..normalize import html_to_markdown
 from .base import Row
 
@@ -103,18 +103,17 @@ class RssSource:
         url = query.get("url")
         if not isinstance(url, str) or not url:
             raise RssFetchError("query.url 必填且須為非空字串")
+        headers = query.get("headers")
         try:
-            check_outbound_url(url)  # SSRF 閘(見 netguard 的未完成項)
-        except UnsafeUrlError as exc:
-            raise RssFetchError(str(exc)) from exc
-        headers = query.get("headers") or {}
-        try:
+            # follow_redirects=False:由 guarded_get 逐跳重驗 + 套 header allowlist(SSRF)。
             async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
+                timeout=self._timeout, follow_redirects=False
             ) as client:
-                resp = await client.get(url, headers=headers)
+                resp = await guarded_get(client, url, headers)
                 resp.raise_for_status()
                 content = resp.content
+        except UnsafeUrlError as exc:  # SSRF 閘擋下 → 具名
+            raise RssFetchError(str(exc)) from exc
         except RssFetchError:
             raise
         except Exception as exc:  # 連線/狀態層失敗 → 具名 + 截長
