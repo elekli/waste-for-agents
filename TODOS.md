@@ -17,6 +17,9 @@ MVP 刻意延後的項目。寫下來才算數(ENGINEERING Prime Directive 7)。
       bind 非 loopback 時 `/health` 需放 Tailscale / reverse-proxy auth 後。
 - [ ] **DNS-rebinding(SSRF 殘留)。** netguard check 解析的 IP 與 httpx 實連 IP 可能不同(TOCTOU)。
       上線前以「pin 解析 IP 後用該 IP 連線」收尾。MVP 接受(feed 規模小、polls 稀疏)。
+- [ ] **issue_key 無限流(review)。** 未認證端點,可洪水發 free key → api_keys 列無界 +
+      RateLimiter `_hits` 隨 distinct key 成長。需:per-IP rate limit(取 X-Forwarded-For / client IP)
+      或全域發放速率 + key 數上限 + 閒置 key TTL 回收。MVP 預設 bind loopback,延後。
 - [ ] **錯誤訊息的 token 防護目前靠 _scrub + 不在 message 帶 headers。** uvicorn 若記錄
       完整 traceback,__cause__(httpx 錯誤)理論上仍可能含 request 細節。確認 httpx 不在
       exception repr 帶 Authorization;必要時關閉 `from exc` 或自訂 log filter。

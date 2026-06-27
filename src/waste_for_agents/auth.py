@@ -12,13 +12,21 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from .store import ApiKey, Store
 
 _KEY_PREFIX = "wfa_"
+
+# 自助發放的 free key 預設每分鐘上限(RateLimiter 預設窗 60s)。
+DEFAULT_FREE_RATE_LIMIT = 60
+
+
+class AuthError(Exception):
+    """認證失敗:缺 key / key 無效 / rate limit 超限。"""
 
 
 def generate_key() -> str:
@@ -38,6 +46,30 @@ def verify(store: Store, presented_key: str) -> ApiKey | None:
     return store.get_api_key_by_hash(hash_key(presented_key))
 
 
+def bearer_key(headers: Mapping[str, str]) -> str | None:
+    """從 Authorization header 取 Bearer token。scheme 大小寫不敏感;格式不符回 None。"""
+    raw = headers.get("authorization")
+    if not raw:
+        return None
+    parts = raw.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    token = parts[1].strip()
+    return token or None
+
+
+def authenticate(
+    store: Store, rate_limiter: RateLimiter, presented_key: str | None
+) -> ApiKey:
+    """驗 key + 套 rate limit,回 ApiKey;任一關卡失敗拋 AuthError(不洩漏細節)。"""
+    rec = verify(store, presented_key or "")
+    if rec is None:
+        raise AuthError("無效或缺少 API key")
+    if not rate_limiter.allow(rec.id, rec.rate_limit):
+        raise AuthError("rate limit 超限,請稍後再試")
+    return rec
+
+
 class RateLimiter:
     """記憶體滑動窗 rate limiter(單實例 MVP;多實例需移到 store/Redis)。
 
@@ -51,16 +83,20 @@ class RateLimiter:
         self._window_s = window_s
         self._now = now
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()  # tools/route 跨 threadpool 緒共用 → 序列化 deque 存取
 
     def allow(self, key_id: str, limit: int) -> bool:
         if limit <= 0:
             return True
-        now = self._now()
-        cutoff = now - self._window_s
-        q = self._hits[key_id]
-        while q and q[0] <= cutoff:
-            q.popleft()
-        if len(q) >= limit:
-            return False
-        q.append(now)
-        return True
+        with self._lock:  # 修 deque 的 TOCTOU race(review Important)
+            now = self._now()
+            cutoff = now - self._window_s
+            q = self._hits[key_id]
+            while q and q[0] <= cutoff:
+                q.popleft()
+            if len(q) >= limit:
+                return False
+            q.append(now)
+            return True
+        # 註:閒置 key 的空 deque 不主動回收(_hits 隨 distinct key 成長)——
+        # 與 issue_key 無限流同源,見 TODOS;MVP 預設 bind loopback,可接受。

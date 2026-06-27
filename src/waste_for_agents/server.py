@@ -142,10 +142,8 @@ class Service:
         return {"watch_id": watch.id}
 
     def _owned_watch_ids(self, caller_key_id: str | None) -> set[str]:
-        """呼叫者歸戶的 watch id 集合(None caller = 無歸戶 watch)。"""
-        return {
-            w.id for w in self.store.list_watches() if w.api_key_id == caller_key_id
-        }
+        """呼叫者歸戶的 watch id 集合(None caller = 無歸戶 watch)。store 層 WHERE 過濾。"""
+        return self.store.list_watch_ids_by_api_key(caller_key_id)
 
     def list_changes(
         self, since_cursor: int | None, caller_key_id: str | None = None
@@ -184,37 +182,34 @@ class Service:
         不被清(否則別人一呼叫就把 withheld 翻 0、事件永久遺失)。非 paid 同理只拒不 claim。
         """
         watch = self.store.get_watch(watch_id)
-        if watch is None:
-            return {"events": [], "error": "watch not found"}
-        if watch.api_key_id != caller_key_id:
-            return {"events": [], "error": "無權存取此 watch"}
+        # 不存在與非擁有者回「位元級相同」回應(不洩漏 watch 是否存在;review Critical)
+        if watch is None or watch.api_key_id != caller_key_id:
+            return {"events": [], "error": "not found or unauthorized"}
         tier = (
             self.store.get_api_key_tier(watch.api_key_id) if watch.api_key_id else None
         )
         if tier != "paid":
+            # 已確認呼叫者就是擁有者 → 可安全給「需付費」提示
             return {"events": [], "error": "watch 未付費;replay 需 tier=paid"}
         events = self.store.claim_withheld(watch_id)
         return {"events": [_event_dict(e) for e in events]}
 
     def list_watches(self, caller_key_id: str | None = None) -> dict[str, Any]:
-        """只列呼叫者歸戶的 watch(privacy:不洩漏他人訂閱)。"""
+        """只列呼叫者歸戶的 watch(privacy:不洩漏他人訂閱)。store 層 WHERE 過濾。"""
         return {
             "watches": [
                 _watch_dict(w)
-                for w in self.store.list_watches()
-                if w.api_key_id == caller_key_id
+                for w in self.store.list_watches_by_api_key(caller_key_id)
             ]
         }
 
     def delete_watch(
         self, watch_id: str, caller_key_id: str | None = None
     ) -> dict[str, Any]:
-        """刪 watch;須為呼叫者歸戶(非擁有者拒,連帶不洩漏是否存在以外的資訊)。"""
+        """刪 watch;須為呼叫者歸戶。不存在與非擁有者回相同 {deleted: False}(不洩漏存在性)。"""
         watch = self.store.get_watch(watch_id)
-        if watch is None:
+        if watch is None or watch.api_key_id != caller_key_id:
             return {"deleted": False}
-        if watch.api_key_id != caller_key_id:
-            return {"deleted": False, "error": "無權存取此 watch"}
         return {"deleted": self.store.delete_watch(watch_id)}
 
 
@@ -273,8 +268,8 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         #   auth + rate-limit 已擋匿名濫用;query 內容驗證仍後置(見 TODOS.md)。
         try:
             caller = _caller_from_ctx(ctx)
-        except AuthError as e:
-            return {"error": f"unauthorized: {e}"}
+        except AuthError:
+            return {"error": "unauthorized"}
         return service.create_watch(
             source, query, key_columns, ignore_columns, interval_s,
             source_kind=source_kind, api_key_id=caller,
@@ -289,8 +284,8 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         """
         try:
             caller = _caller_from_ctx(ctx)
-        except AuthError as e:
-            return {"error": f"unauthorized: {e}", "events": [], "cursor": since_cursor}
+        except AuthError:
+            return {"error": "unauthorized", "events": [], "cursor": since_cursor}
         return service.list_changes(since_cursor, caller_key_id=caller)
 
     @mcp.tool()
@@ -298,8 +293,8 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         """付費後補拿你自己某 watch 被保留(withheld)的變化。回 {events}(或 error)。需 Bearer key。(read)"""
         try:
             caller = _caller_from_ctx(ctx)
-        except AuthError as e:
-            return {"error": f"unauthorized: {e}", "events": []}
+        except AuthError:
+            return {"error": "unauthorized", "events": []}
         return service.replay_watch(watch_id, caller_key_id=caller)
 
     @mcp.tool()
@@ -307,8 +302,8 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         """列出你自己的監看 + 各自 status(含 last_error)。需 Bearer key。(read)"""
         try:
             caller = _caller_from_ctx(ctx)
-        except AuthError as e:
-            return {"error": f"unauthorized: {e}", "watches": []}
+        except AuthError:
+            return {"error": "unauthorized", "watches": []}
         return service.list_watches(caller_key_id=caller)
 
     @mcp.tool()
@@ -316,8 +311,8 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         """刪除你自己的一個監看。回 {deleted}。需 Bearer key。(write)"""
         try:
             caller = _caller_from_ctx(ctx)
-        except AuthError as e:
-            return {"error": f"unauthorized: {e}", "deleted": False}
+        except AuthError:
+            return {"error": "unauthorized", "deleted": False}
         return service.delete_watch(watch_id, caller_key_id=caller)
 
     from fastapi import FastAPI

@@ -29,6 +29,18 @@ def _added_round(s, w, run_seq, ids):
     s.record_run(w.id, [{"id": i} for i in ids], events, None, run_seq=run_seq)
 
 
+def test_store_scoped_watch_queries_handle_null(tmp_path):
+    # store 層 WHERE api_key_id(None 須用 IS NULL,否則 = NULL 永不命中)
+    s = Store.open(tmp_path / "a.db")
+    k1, _ = _key(s)
+    w1 = _watch(s, api_key_id=k1)
+    wfree = _watch(s, api_key_id=None)
+    assert s.list_watch_ids_by_api_key(k1) == {w1.id}
+    assert s.list_watch_ids_by_api_key(None) == {wfree.id}  # NULL 分區
+    assert {w.id for w in s.list_watches_by_api_key(k1)} == {w1.id}
+    assert {w.id for w in s.list_watches_by_api_key(None)} == {wfree.id}
+
+
 def test_issue_key_returns_plaintext_and_stores_hash(tmp_path):
     s = Store.open(tmp_path / "a.db")
     out = Service(s).issue_key()
@@ -58,10 +70,42 @@ def test_delete_watch_requires_ownership(tmp_path):
     k2, _ = _key(s)
     w = _watch(s, api_key_id=k1)
     rej = svc.delete_watch(w.id, caller_key_id=k2)  # 別人刪不掉
-    assert rej["deleted"] is False and rej.get("error")
+    # 與「不存在」回應相同(不洩漏 watch 是否存在)
+    assert rej == {"deleted": False}
     assert s.get_watch(w.id) is not None  # 仍在
     ok = svc.delete_watch(w.id, caller_key_id=k1)  # 自己可刪
     assert ok["deleted"] is True
+
+
+def test_replay_delete_dont_leak_existence(tmp_path):
+    # Critical(review):非擁有者與不存在的 watch_id 必須得到「位元級相同」回應
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    k2, _ = _key(s)
+    w = _watch(s, api_key_id=k1)  # 屬於 k1
+    # replay:不存在 vs 別人的 → 同回應
+    assert svc.replay_watch("nonexistent", caller_key_id=k2) == svc.replay_watch(
+        w.id, caller_key_id=k2
+    )
+    # delete:不存在 vs 別人的 → 同回應
+    assert svc.delete_watch("nonexistent", caller_key_id=k2) == svc.delete_watch(
+        w.id, caller_key_id=k2
+    )
+
+
+def test_list_changes_anonymous_sees_only_unowned(tmp_path):
+    # Important(review):caller_key_id=None 只見無歸戶 watch,不洩漏任何 owned 事件
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    wowned = _watch(s, api_key_id=k1)
+    wfree = _watch(s, api_key_id=None)  # 無歸戶
+    _added_round(s, wowned, 1, ["o1"])
+    _added_round(s, wfree, 1, ["f1"])
+    res = svc.list_changes(None, caller_key_id=None)
+    assert {e["watch_id"] for e in res["events"]} == {wfree.id}  # 只見無歸戶
+    assert all(e["watch_id"] != wowned.id for e in res["events"])  # 零 owned 洩漏
 
 
 def test_replay_ownership_rejects_nonowner_preserves_withheld(tmp_path):
