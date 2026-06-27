@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from .diff import diff_rolling, diff_rows, row_key
+from .normalize import norm_version
 from .sources.base import Source, get_source
 from .store import EventTuple, Row, Store, Watch
 
@@ -130,10 +131,11 @@ async def run_due_watches(
     store: Store, now_epoch: float, resolve: Resolve = get_source
 ) -> int:
     """跑所有到期 watch,回本輪新增 event 總數。"""
+    nv = norm_version()  # 當前正規化版本戳(全域),餵給 rolling watch 偵測升級(F5)
     total = 0
     for watch in store.list_watches():
         if _is_due(watch, now_epoch):
-            total += await run_watch(store, watch, resolve)
+            total += await run_watch(store, watch, resolve, norm_version=nv)
     return total
 
 

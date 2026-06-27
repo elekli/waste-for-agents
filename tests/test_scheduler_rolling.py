@@ -90,6 +90,28 @@ def test_suppress_rebaseline_persists_without_round(tmp_path):
     assert s.get_snapshot_norm_version(w.id) == "v2"  # 版本戳前進(否則下輪再抑制、卡死)
 
 
+def test_run_due_watches_wires_norm_version(tmp_path, monkeypatch):
+    # F5 production 接線:run_due_watches 把當前 norm_version 餵給 rolling watch,
+    # 版本戳 bump 時整片 re-baseline 而非偽報 modified。
+    import waste_for_agents.scheduler as sched
+
+    s = Store.open(tmp_path / "w.db")
+    w = s.create_watch(
+        "rss", {"url": "x"}, ["id"], [], 0, source_kind="rolling_window"
+    )
+    src = FakeSource([{"id": "a", "c": "A"}])
+    monkeypatch.setattr(sched, "norm_version", lambda: "vA")
+    asyncio.run(sched.run_due_watches(s, 1.0e12, _resolve(src)))
+    assert s.get_snapshot_norm_version(w.id) == "vA"
+    # 版本戳 bump + 同篇重算內容 → 0 event(suppress)、內容 re-baseline、版本戳更新
+    src.rows = [{"id": "a", "c": "A_reMD"}]
+    monkeypatch.setattr(sched, "norm_version", lambda: "vB")
+    n = asyncio.run(sched.run_due_watches(s, 2.0e12, _resolve(src)))
+    assert n == 0
+    assert s.get_snapshot(w.id) == [{"id": "a", "c": "A_reMD"}]
+    assert s.get_snapshot_norm_version(w.id) == "vB"
+
+
 def _reload(store, watch):
     w = store.get_watch(watch.id)
     assert w is not None

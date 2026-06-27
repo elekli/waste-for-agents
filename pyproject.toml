@@ -12,6 +12,13 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "httpx>=0.27",
+    # 精確 pin:正規化 determinism(F5);版本變動會經 norm_version 偵測並 re-baseline,
+    # 但 pin 避免非預期升級偽報整片 feed modified。升級時一併更新 norm_version 對照。
+    # beautifulsoup4 是 markdownify 的 transitive 依賴、會影響輸出 → 也 pin + 納入 norm_version,
+    # 否則 bs4 升級會悄悄改 MD 輸出而繞過 F5 偵測(multi-review Important)。
+    "feedparser==6.0.12",
+    "markdownify==1.2.2",
+    "beautifulsoup4==4.15.0",
 ]
 
 [project.scripts]
@@ -40,3 +47,8 @@ line-length = 100
 python_version = "3.12"
 strict = true
 files = ["src"]
+
+# feedparser 不附 py.typed / 無官方 stub:忽略其缺型別(adapter 內已把回傳全 stringify)。
+[[tool.mypy.overrides]]
+module = ["feedparser"]
+ignore_missing_imports = true

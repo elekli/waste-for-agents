@@ -12,11 +12,28 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
+from .discovery import FeedDiscoveryError, discover_feed
 from .scheduler import scheduler_loop
 from .sources import base
 from .sources.http_json import HttpJsonSource
+from .sources.rss import RssSource
 from .sources.twinkle import TwinkleSource
 from .store import ChangeEvent, Store, Watch
+
+
+def register_default_sources() -> None:
+    """註冊內建 source adapters(twinkle / http_json / rss)。"""
+    base.register("twinkle", TwinkleSource())
+    base.register("http_json", HttpJsonSource())
+    base.register("rss", RssSource())
+
+
+def _source_default_kind(source: str) -> str:
+    """取 source 宣告的 default_source_kind(未註冊或未宣告 → 'dataset')。"""
+    try:
+        return str(getattr(base.get_source(source), "default_source_kind", "dataset"))
+    except base.UnknownSourceError:
+        return "dataset"
 
 INSTRUCTIONS = (
     "waste-for-agents:給 AI agent 的結構化監看訂閱層(pull-first)。\n"
@@ -79,9 +96,18 @@ class Service:
         key_columns: list[str],
         ignore_columns: list[str],
         interval_s: int,
-        source_kind: str = "dataset",
+        source_kind: str | None = None,
         api_key_id: str | None = None,
     ) -> dict[str, Any]:
+        # rss:把首頁/feed url 解析成確定的 feed url(agent 只知「訂 X 的 blog」)。
+        if source == "rss":
+            url = query.get("url")
+            if not isinstance(url, str) or not url:
+                raise FeedDiscoveryError("rss watch 的 query.url 必填")
+            query = {**query, "url": discover_feed(url, query.get("headers"))}
+        # source_kind 未指定 → 取 source 宣告的 default(rss=rolling_window;agent 免傳)。
+        if source_kind is None:
+            source_kind = _source_default_kind(source)
         watch = self.store.create_watch(
             source,
             query,
@@ -157,13 +183,15 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         key_columns: list[str],
         ignore_columns: list[str],
         interval_s: int = 300,
-        source_kind: str = "dataset",
+        source_kind: str | None = None,
         api_key_id: str | None = None,
     ) -> dict[str, Any]:
         """訂閱一個結構化來源的 query。回 {watch_id}。(write)
 
-        source_kind:'dataset'(完整資料集)或 'rolling_window'(RSS;added 對
-        seen-set、不報 removed)。api_key_id:計費歸戶(free tier 觸發計費 gate)。
+        source_kind:省略則取 source 預設(rss=rolling_window、其餘 dataset);亦可顯式
+        傳 'dataset'(完整資料集)或 'rolling_window'(RSS;added 對 seen-set、不報
+        removed)。source='rss' 時 query.url 可給首頁,會自動 discover feed。
+        api_key_id:計費歸戶(free tier 觸發計費 gate)。
         """
         # ⚠ 濫用面(MVP 缺口,開放給可信任 tester 以外前必補,見 TODOS.md / README 安全段):
         #   query 原樣透傳給 TwinkleSource → Twinkle query_rows 接受 raw SQL where/group_by。
@@ -236,8 +264,7 @@ def serve(
     """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。"""
     import uvicorn
 
-    base.register("twinkle", TwinkleSource())
-    base.register("http_json", HttpJsonSource())
+    register_default_sources()
     store = Store.open(db_path)
     app = build_app(store, tick_s)
     uvicorn.run(app, host=host, port=port)
