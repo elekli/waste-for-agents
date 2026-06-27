@@ -356,14 +356,24 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
 
 
 def serve(
-    db_path: str = "waste.db",
+    db_path: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8848,
     tick_s: float = 5.0,
 ) -> None:
-    """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。"""
+    """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。
+
+    db_path=None(預設)→ 落地物進單一 data dir(`paths.db_path()`,見 paths.py);
+    顯式給路徑則用之(測試 / 自訂位置)。
+    """
     import uvicorn
 
+    from .paths import db_path as default_db_path
+    from .paths import ensure_data_dir
+
+    if db_path is None:
+        ensure_data_dir()
+        db_path = str(default_db_path())
     register_default_sources()
     store = Store.open(db_path)
     app = build_app(store, tick_s)

@@ -119,6 +119,20 @@ scheme allowlist、阻擋內網/loopback/link-local/metadata(169.254.169.254)、
 - **DNS-rebinding** 未防(check 解析 IP 與實連 IP 可能不同)——記為 fast-follow,MVP 接受。
 - **錯誤訊息已 scrub token + 截長**(`last_error` 會經 `list_watches` / `/changes` 對外)。
 
+## 落地物 / 清理
+
+所有狀態集中在**單一 data dir**:
+- 預設 `~/.waste-for-agents/`,可由 env `WASTE_DATA_DIR` 覆寫。
+- 內含 `waste.db`(SQLite:watches / snapshots / change_events / api_keys)。
+- `serve` 省略 `--db` 即落在此(顯式 `--db <path>` 可覆寫)。
+
+清空(刪整個 data dir,只刪該 dir,拒刪 home/root/cwd):
+
+```bash
+waste-for-agents teardown            # 刪預設 ~/.waste-for-agents/
+WASTE_DATA_DIR=/tmp/wfa waste-for-agents teardown   # 刪指定 dir
+```
+
 ## Status
 
 MVP 開發中。實作計畫見 [`docs/superpowers/plans/2026-06-21-waste-for-agents-mvp.md`](docs/superpowers/plans/2026-06-21-waste-for-agents-mvp.md)。
