@@ -99,13 +99,24 @@ list_changes()            // → {"events":[...], "cursor": N}
 
 ## Security(MVP 邊界,先讀再對外)
 
-這是 MVP,對外開放前有幾個已知缺口(完整清單見 [`TODOS.md`](TODOS.md)):
+**認證(THE-10):** create / list / delete / replay 等 MCP tool 需 API key,以
+`Authorization: Bearer <key>` 帶上(MCP client 設一次即可;key 不進每次 tool-call 參數
+記錄)。`issue_key` 免認證自助發 free-tier key(回明文一次,server 只存雜湊);每把 key
+有 rate limit。watch 自動歸戶呼叫者,`list_watches` / `list_changes` **只回呼叫者自己的**
+watch(privacy:不洩漏他人訂了什麼);`replay_watch` / `delete_watch` 驗 ownership。
 
-- **`create_watch` 是借用維運者 token 的「持久排程 raw-SQL 執行 primitive」。** `query` 原樣
-  透傳 Twinkle `query_rows`(接受 raw SQL),且無驗證 / 無 rate-limit / 無 interval 下限。
-  **只給可信任的人**,別把 `create_watch` 開放到公網。
-- **`/changes`、`/health` 無授權。** 預設只 bind `127.0.0.1`。若照上面建議由維運者代管而
-  **bind 非 loopback,務必擺在 Tailscale 或反向代理的 auth 之後**——否則所有被監看的 rows 外洩。
+**SSRF(THE-10):** 抓取 agent 提供的 URL(RSS / discovery / http_json)一律經 `netguard`:
+scheme allowlist、阻擋內網/loopback/link-local/metadata(169.254.169.254)、**redirect 逐跳
+重驗**(防 `公開→內網` 繞道)、**出站 header allowlist**(丟棄 Host/Authorization/Cookie/Proxy-*)。
+
+對外開放前仍有的已知缺口(完整清單見 [`TODOS.md`](TODOS.md)):
+
+- **`create_watch` 的 `query` 仍未驗證**——原樣透傳 Twinkle `query_rows`(接受 raw SQL)。
+  auth + rate-limit 已擋匿名濫用,但持 key 者仍能下 raw SQL;結構化 query 驗證 + interval
+  下限 + watch 數量上限尚未做。
+- **`/health` 無授權**(只回 watch 數);`/changes` Bearer 選填(無 key 只見無歸戶 watch)。
+  預設 bind `127.0.0.1`;bind 非 loopback 時 `/health` 仍應擺在反向代理 auth 之後。
+- **DNS-rebinding** 未防(check 解析 IP 與實連 IP 可能不同)——記為 fast-follow,MVP 接受。
 - **錯誤訊息已 scrub token + 截長**(`last_error` 會經 `list_watches` / `/changes` 對外)。
 
 ## Status

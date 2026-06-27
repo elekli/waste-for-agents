@@ -4,15 +4,19 @@ MVP 刻意延後的項目。寫下來才算數(ENGINEERING Prime Directive 7)。
 
 ## 安全 / 濫用面(開放給可信任 tester 以外前必處理)
 
-- [ ] **create_watch = 持久排程 raw-SQL primitive。** query 原樣透傳 Twinkle `query_rows`
-      (接受 raw SQL),借用維運者 token 無限期重跑。需:query 驗證(限 column-op-value
-      結構化過濾、拒 raw SQL)、interval 下限、每來源/每呼叫者 rate-limit、watch 數量上限。
-      參考 Twinkle `query_rows` docstring 自己的警告:「對外暴露時 gateway 應只接受結構化過濾」。
-- [ ] **`/changes` 與 `/health` 未授權。** 預設 bind 127.0.0.1。README 的「維運者代管」建議
-      若 bind 非 loopback,這兩個端點對外開放(洩漏所有被監看 rows + watch 數)。需:放在
-      Tailscale / reverse-proxy auth 後,或加應用層 token。
-- [ ] **source 白名單只是「serve() 剛好只註冊 twinkle」。** 開放任意來源時要真正的 allowlist +
-      SSRF 防護(禁私網/metadata endpoint)。
+- [x] **API key 認證 + rate limit(THE-10)。** create/list/delete/replay 需 Bearer key;
+      issue_key 自助發 free key(只存 hash);per-key rate limit;watch 歸戶 + per-caller scope
+      (list_watches/list_changes 只見自己的)+ replay/delete ownership。**匿名濫用已擋。**
+- [x] **SSRF 防護(THE-10)。** scheme allowlist + 內網/metadata 阻擋 + redirect 逐跳重驗 +
+      出站 header allowlist,套用 rss/discovery/http_json。
+- [ ] **create_watch 的 query 仍未驗證(raw SQL)。** auth 後仍是持 key 者的「持久排程 raw-SQL
+      primitive」:query 原樣透傳 Twinkle `query_rows`。需:query 驗證(限 column-op-value
+      結構化過濾、拒 raw SQL)、interval 下限、watch 數量上限。參考 Twinkle `query_rows`
+      docstring:「對外暴露時 gateway 應只接受結構化過濾」。
+- [ ] **`/health` 未授權**(只回 watch 數;`/changes` 已支援 Bearer 選填 + per-caller scope)。
+      bind 非 loopback 時 `/health` 需放 Tailscale / reverse-proxy auth 後。
+- [ ] **DNS-rebinding(SSRF 殘留)。** netguard check 解析的 IP 與 httpx 實連 IP 可能不同(TOCTOU)。
+      上線前以「pin 解析 IP 後用該 IP 連線」收尾。MVP 接受(feed 規模小、polls 稀疏)。
 - [ ] **錯誤訊息的 token 防護目前靠 _scrub + 不在 message 帶 headers。** uvicorn 若記錄
       完整 traceback,__cause__(httpx 錯誤)理論上仍可能含 request 細節。確認 httpx 不在
       exception repr 帶 Authorization;必要時關閉 `from exc` 或自訂 log filter。
