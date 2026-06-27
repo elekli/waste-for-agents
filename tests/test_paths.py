@@ -67,6 +67,49 @@ def test_teardown_refuses_root(monkeypatch):
         teardown()
 
 
+def test_data_dir_empty_or_whitespace_falls_back(monkeypatch):
+    # 空字串 / 純空白 env 都不應變成 cwd 下的怪路徑,而是退回預設(review:空白繞過閘)
+    default = (Path.home() / ".waste-for-agents").resolve()
+    monkeypatch.setenv("WASTE_DATA_DIR", "")
+    assert data_dir() == default
+    monkeypatch.setenv("WASTE_DATA_DIR", "   ")
+    assert data_dir() == default
+    monkeypatch.setenv("WASTE_DATA_DIR", "\t")
+    assert data_dir() == default
+
+
+def test_teardown_refuses_cwd(monkeypatch):
+    monkeypatch.setenv("WASTE_DATA_DIR", ".")
+    with pytest.raises(UnsafeTeardownError):
+        teardown()
+
+
+def test_teardown_refuses_home_ancestor(monkeypatch):
+    # home 的父層(如 /Users、/home)也要擋
+    parent = str(Path.home().resolve().parent)
+    monkeypatch.setenv("WASTE_DATA_DIR", parent)
+    with pytest.raises(UnsafeTeardownError):
+        teardown()
+
+
+def test_teardown_refuses_toplevel_system_dir(monkeypatch):
+    # deny-list 漏掉的系統頂層 dir(/usr、/etc…)靠深度閘擋(review Critical)
+    for top in ("/usr", "/etc", "/bin", "/var"):
+        monkeypatch.setenv("WASTE_DATA_DIR", top)
+        with pytest.raises(UnsafeTeardownError):
+            teardown()
+
+
+def test_teardown_refuses_when_target_is_file(monkeypatch, tmp_path):
+    f = tmp_path / "deep" / "notadir"
+    f.parent.mkdir(parents=True)
+    f.write_text("x")
+    monkeypatch.setenv("WASTE_DATA_DIR", str(f))
+    with pytest.raises(UnsafeTeardownError):
+        teardown()  # 目標是檔案 → 清楚拒絕,不吐 NotADirectoryError
+    assert f.exists()  # 檔案未動
+
+
 def test_serve_default_db_lands_in_data_dir(monkeypatch, tmp_path):
     # serve(db_path=None)→ 落地物進 data dir(uvicorn.run 以 no-op mock,不真起 server)
     import uvicorn
@@ -87,3 +130,10 @@ def test_cli_teardown_removes_data_dir(monkeypatch, tmp_path):
     (data_dir() / "waste.db").write_text("x")
     assert main(["teardown"]) == 0
     assert not data_dir().exists()
+
+
+def test_cli_teardown_unsafe_returns_nonzero(monkeypatch):
+    from waste_for_agents.__main__ import main
+
+    monkeypatch.setenv("WASTE_DATA_DIR", "/")  # 危險路徑
+    assert main(["teardown"]) == 1  # 拒絕、不吐 traceback

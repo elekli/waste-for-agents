@@ -25,10 +25,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "teardown":
-        from .paths import data_dir, teardown
+        from .paths import UnsafeTeardownError, data_dir, teardown
 
         target = data_dir()
-        removed = teardown()
+        try:
+            removed = teardown()
+        except UnsafeTeardownError as exc:
+            print(f"拒絕:{exc}")
+            return 1
         print(f"{'已刪除' if removed else '不存在(無動作)'}:{target}")
         return 0
 

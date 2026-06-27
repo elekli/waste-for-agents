@@ -126,7 +126,8 @@ scheme allowlist、阻擋內網/loopback/link-local/metadata(169.254.169.254)、
 - 內含 `waste.db`(SQLite:watches / snapshots / change_events / api_keys)。
 - `serve` 省略 `--db` 即落在此(顯式 `--db <path>` 可覆寫)。
 
-清空(刪整個 data dir,只刪該 dir,拒刪 home/root/cwd):
+清空(刪整個 data dir,只刪該 dir;安全閘:必在 home 或暫存目錄下,且拒刪 home / cwd /
+root 與其祖先如 `/Users`、以及 `/usr` `/etc` `/var` 等系統 dir):
 
 ```bash
 waste-for-agents teardown            # 刪預設 ~/.waste-for-agents/
