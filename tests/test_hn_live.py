@@ -41,18 +41,28 @@ def test_hn_discover_returns_feed():
 
 
 def test_hn_fetch_stable_ids_and_markdown():
-    from waste_for_agents.sources.rss import RssSource
+    import httpx
 
-    rows = asyncio.run(RssSource().fetch({"url": HN_FEED}))
+    from waste_for_agents.netguard import guarded_get
+    from waste_for_agents.sources.rss import parse_feed
+
+    # 一次真實 fetch 取 bytes,同 buffer parse 兩次 → 去除「兩次 live fetch 間 feed 更新」的 flaky
+    async def _fetch_bytes():
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            resp = await guarded_get(client, HN_FEED)
+            resp.raise_for_status()
+            return resp.content
+
+    content = asyncio.run(_fetch_bytes())
+    rows = parse_feed(content)
     assert rows, "HN feed 應有條目"
     # 每筆固定 schema、穩定非空 id
     for r in rows:
         assert set(r) == {"id", "title", "link", "published", "author", "summary", "content"}
         assert r["id"]  # 非空穩定 id
-    # id 跨「兩次解析」穩定(不變式 4 在真實資料上)
-    rows2 = asyncio.run(RssSource().fetch({"url": HN_FEED}))
-    common = {r["id"] for r in rows} & {r["id"] for r in rows2}
-    assert common, "兩次抓取應有重疊條目(id 穩定)"
+    # id 跨「同 buffer 兩次解析」穩定(不變式 4 在真實資料上,無網路時序依賴)
+    rows2 = parse_feed(content)
+    assert [r["id"] for r in rows] == [r["id"] for r in rows2]
 
 
 def test_hn_two_round_diff_reasonable(tmp_path):
@@ -73,3 +83,4 @@ def test_hn_two_round_diff_reasonable(tmp_path):
     w = s.get_watch(wid)
     n2 = asyncio.run(run_watch(s, w, lambda name: src, norm_version="v1"))
     assert n2 == 0
+    s.close()

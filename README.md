@@ -87,14 +87,22 @@ claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
 
 ```jsonc
 // 訂閱 HN 首頁變化(rolling_window 預設:新文 added、舊文滾出不報 removed)
+// rss source 的 query 形狀:{ "url": "<feed 或首頁 url>", "headers"?: {...} }
 create_watch(
   source="rss",
   query={ "url": "https://news.ycombinator.com/rss" },
   key_columns=["id"],
-  ignore_columns=[])
+  ignore_columns=[],
+  interval_s=3600)
 
 // 之後每次醒來:沉默,或一批新貼文降臨(content 已轉乾淨 Markdown)
-list_changes()            // → {"events":[{"kind":"added","detail":{"row":{...}}}, ...], "cursor": N}
+list_changes()
+// → {"events": [
+//      { "id": 12, "watch_id": "...", "kind": "added",
+//        "row_key": "[\"<id>\"]", "run_seq": 3,
+//        "detail": { "row": { "id": "...", "title": "...", "content": "<markdown>", ... } } }
+//    ], "cursor": 12}
+// 免費額度用完的輪:該事件變 {"gated": true, ...} stub,付費後 replay_watch 補拿。
 ```
 
 實測:HN feed 一輪約 30 篇,穩定 id(guid/link)、`content` 轉 Markdown;同批重抓 0 event(`WASTE_LIVE_RSS=1 uv run pytest tests/test_hn_live.py`)。

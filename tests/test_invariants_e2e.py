@@ -18,7 +18,6 @@
 
 import asyncio
 
-from waste_for_agents.auth import generate_key, hash_key
 from waste_for_agents.normalize import html_to_markdown, norm_version
 from waste_for_agents.scheduler import run_watch
 from waste_for_agents.server import Service
@@ -44,12 +43,6 @@ def _rolling_watch(store, api_key_id=None):
         "rss", {"url": "x"}, ["id"], [], 3600,
         source_kind="rolling_window", api_key_id=api_key_id,
     ).id
-
-
-def _free_key(store):
-    return store.create_api_key(
-        key_hash=hash_key(generate_key()), tier="free", rate_limit=1000
-    )
 
 
 def _round(store, src, watch_id, rows, nv="v1"):
@@ -85,13 +78,20 @@ def test_inv2_rollout_no_removed_no_pollution(tmp_path):
     s = Store.open(tmp_path / "w.db")
     src = _Src()
     wid = _rolling_watch(s)
+    # 另一個獨立 watch(自己的 source/資料)——驗事件不跨 watch 污染
+    src_other = _Src()
+    wid_other = _rolling_watch(s)
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}])
+    _round(s, src_other, wid_other, [{"id": "z", "c": "Z"}])  # 他者資料
     n = _round(s, src, wid, [{"id": "b", "c": "B"}, {"id": "c", "c": "C"}])  # a 滾出
     assert n == 1  # 只 c added
     kinds = _kinds(s, wid)
     assert not any(k == "removed" for k, _, _ in kinds)  # 全程無 removed
     # b 未被重報(不污染:沒有第二個 b 事件)
     assert sum(1 for k, rk, _ in kinds if k == "added" and rk == '["b"]') == 1
+    # cross-watch:wid 的事件不含他者的 z;wid_other 不含 a/b/c
+    assert all(rk != '["z"]' for _, rk, _ in kinds)
+    assert {rk for _, rk, _ in _kinds(s, wid_other)} == {'["z"]'}
 
 
 # --- 不變式 3:窗口滑動交互(進+出+重浮現同時正確)---
@@ -102,8 +102,10 @@ def test_inv3_three_way_slide(tmp_path):
     src = _Src()
     wid = _rolling_watch(s)
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}, {"id": "c", "c": "C"}])
-    _round(s, src, wid, [{"id": "c", "c": "C"}, {"id": "d", "c": "D"}])  # a,b 滾出,d 進
-    # 同一輪:d 進 + a 重浮現(內容同)+ e 真新 → 只 d、e added,a 不假 added
+    n2 = _round(s, src, wid, [{"id": "c", "c": "C"}, {"id": "d", "c": "D"}])  # a,b 滾出,d 進
+    assert n2 == 1  # d 真的被 added(別讓「靜默漏掉新項」的 bug 溜過)
+    assert '["d"]' in {rk for k, rk, _ in _kinds(s, wid) if k == "added"}
+    # 同一輪:d 未變 + a 重浮現(內容同)+ e 真新 → 只 e added,a 不假 added
     n = _round(s, src, wid, [
         {"id": "c", "c": "C"}, {"id": "d", "c": "D"},
         {"id": "a", "c": "A"}, {"id": "e", "c": "E"},
@@ -148,7 +150,10 @@ def test_inv5_reappearance_no_false_event(tmp_path):
 
 def test_inv6_normalize_deterministic():
     html = '<p>Hello <a href="https://x.com">link</a> <b>bold</b></p>'
-    assert html_to_markdown(html) == html_to_markdown(html)  # 位元級相同
+    md = html_to_markdown(html)
+    assert md == html_to_markdown(html)  # 跨呼叫一致(抓非決定性:dict/隨機序)
+    # golden:真的轉對(抓「決定性但壞掉」——連結保留為 MD link、粗體轉 **）
+    assert "[link](https://x.com)" in md and "**bold**" in md
     assert norm_version() == norm_version()  # 版本戳穩定
 
 
@@ -158,9 +163,9 @@ def test_inv6_normalize_deterministic():
 def test_inv7_gate_delays_not_loses(tmp_path):
     s = Store.open(tmp_path / "w.db")
     src = _Src()
-    kid = _free_key(s)  # free_rounds=2
-    wid = _rolling_watch(s, api_key_id=kid)
     svc = Service(s)
+    kid = svc.issue_key()["api_key_id"]  # 真實 onboarding 路徑(free_rounds=2)
+    wid = _rolling_watch(s, api_key_id=kid)
     _round(s, src, wid, [{"id": "a", "c": "A"}])  # 計費輪 1
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}])  # 輪 2
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}, {"id": "c", "c": "C"}])  # 輪 3 超額
@@ -178,19 +183,20 @@ def test_inv7_gate_delays_not_loses(tmp_path):
 
 
 def test_inv8_round_metering_correct(tmp_path):
+    # 走 production read path(Service.list_changes 內部呼叫 meter_and_mark),驗持久水位
     s = Store.open(tmp_path / "w.db")
     src = _Src()
-    kid = _free_key(s)
+    svc = Service(s)
+    kid = svc.issue_key()["api_key_id"]
     wid = _rolling_watch(s, api_key_id=kid)
     _round(s, src, wid, [{"id": "a", "c": "A"}])  # added 輪
     _round(s, src, wid, [{"id": "a", "c": "A2"}])  # modified-only(同 id 內容變)→ 不計輪
     _round(s, src, wid, [{"id": "a", "c": "A2"}, {"id": "b", "c": "B"}])  # added 輪
-    batch, _ = s.events_since(None)
-    first = s.meter_and_mark(wid, [e for e in batch if e.watch_id == wid])
+    svc.list_changes(None, caller_key_id=kid)  # 經 gate 計量
     assert s.get_watch(wid).delivered_rounds == 2  # 只算 2 個 added 輪
-    # idempotent:重呼叫不重計(不變式 8 第二半)
-    second = s.meter_and_mark(wid, [e for e in batch if e.watch_id == wid])
-    assert second == first and s.get_watch(wid).delivered_rounds == 2
+    # idempotent:同游標重拉不重計(持久水位 last_metered_run_seq)
+    svc.list_changes(None, caller_key_id=kid)
+    assert s.get_watch(wid).delivered_rounds == 2
 
 
 # --- 不變式 9:交付恰一次 + 游標單調 ---
@@ -199,21 +205,28 @@ def test_inv8_round_metering_correct(tmp_path):
 def test_inv9_delivery_once_cursor_monotonic(tmp_path):
     s = Store.open(tmp_path / "w.db")
     src = _Src()
-    kid = _free_key(s)
-    wid = _rolling_watch(s, api_key_id=kid)
     svc = Service(s)
-    _round(s, src, wid, [{"id": "a", "c": "A"}])
+    kid = svc.issue_key()["api_key_id"]  # free_rounds=2
+    wid = _rolling_watch(s, api_key_id=kid)
+    _round(s, src, wid, [{"id": "a", "c": "A"}])  # 計費輪 1
     r1 = svc.list_changes(None, caller_key_id=kid)
     c1 = r1["cursor"]
     assert {e["row_key"] for e in r1["events"]} == {'["a"]'}
     # 同游標再拉 → 空 + 游標不倒退(恰一次、單調)
     r1b = svc.list_changes(c1, caller_key_id=kid)
     assert r1b["events"] == [] and r1b["cursor"] == c1
-    # 新一輪 → 只回新事件,游標前進
+    # 輪 2(計費輪 2,免費額度內)+ 輪 3(超額被 gate)
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}])
+    _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}, {"id": "c", "c": "C"}])
     r2 = svc.list_changes(c1, caller_key_id=kid)
-    assert {e["row_key"] for e in r2["events"]} == {'["b"]'}
-    assert r2["cursor"] > c1  # 單調遞增
+    # b 正常交付、c 被 gate 成 stub——但游標仍含 stub 的 id 照常前進(不變式 9:gate 不卡游標)
+    gated = [e for e in r2["events"] if e.get("gated")]
+    assert {e["row_key"] for e in gated} == {'["c"]'}
+    assert r2["cursor"] > c1  # 跨 gated stub 仍單調遞增
+    assert r2["cursor"] == max(e["id"] for e in r2["events"])  # 游標 = 含 stub 的最大 id
+    # 追上後再拉 → 空、游標不倒退(gated 事件不重複交付)
+    r3 = svc.list_changes(r2["cursor"], caller_key_id=kid)
+    assert r3["events"] == [] and r3["cursor"] == r2["cursor"]
 
 
 # --- 不變式 10:跨 session 狀態持久(落 SQLite)---
