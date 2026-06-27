@@ -57,6 +57,13 @@ class Watch:
 
 
 @dataclass
+class ApiKey:
+    id: str
+    tier: str
+    rate_limit: int
+
+
+@dataclass
 class ChangeEvent:
     id: int
     watch_id: str
@@ -377,6 +384,27 @@ class Store:
             )
             self.conn.commit()
         return kid
+
+    def get_api_key_by_hash(self, key_hash: str) -> ApiKey | None:
+        """以 key 雜湊查 api_key(認證入口)。查無回 None。"""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, tier, rate_limit FROM api_keys WHERE key_hash = ?",
+                (key_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ApiKey(id=row["id"], tier=row["tier"], rate_limit=row["rate_limit"])
+
+    def get_api_key(self, api_key_id: str) -> ApiKey | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, tier, rate_limit FROM api_keys WHERE id = ?",
+                (api_key_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ApiKey(id=row["id"], tier=row["tier"], rate_limit=row["rate_limit"])
 
     def get_api_key_tier(self, api_key_id: str) -> str | None:
         with self._lock:
