@@ -120,16 +120,21 @@ def test_claim_withheld_idempotent(tmp_path):
 
 
 def test_list_changes_stubs_gated_delivers_others(tmp_path):
-    # 不變式 9:單一 watch 被 gate 不誤卡/誤丟其他 watch
+    # 不變式 9(scoped):同一呼叫者的兩個 watch,一個 gate 不誤卡/誤丟另一個
     s = Store.open(tmp_path / "m.db")
-    _, wa = _free_key_watch(s)  # A:free,輪 3 超額
-    wb = s.create_watch("rss", {}, ["id"], [], 3600, source_kind="rolling_window")  # B:無 key
+    kid = s.create_api_key(key_hash="hk", tier="free", rate_limit=1000)
+    wa = s.create_watch(
+        "rss", {}, ["id"], [], 3600, source_kind="rolling_window", api_key_id=kid
+    )  # A:輪 3 超額
+    wb = s.create_watch(
+        "rss", {}, ["id"], [], 3600, source_kind="rolling_window", api_key_id=kid
+    )  # B:同呼叫者、新鮮
     _added_round(s, wa, 1, ["a1"])
     _added_round(s, wa, 2, ["a2"])
     _added_round(s, wa, 3, ["a3"])
     _added_round(s, wb, 1, ["b1"])
     svc = Service(s)
-    res = svc.list_changes(None)
+    res = svc.list_changes(None, caller_key_id=kid)
     # B 的事件原樣交付(不受 A 的 gate 影響)
     b_evs = [e for e in res["events"] if e["watch_id"] == wb.id]
     assert len(b_evs) == 1 and not b_evs[0].get("gated")
@@ -141,19 +146,19 @@ def test_list_changes_stubs_gated_delivers_others(tmp_path):
         e for e in res["events"] if e["watch_id"] == wa.id and not e.get("gated")
     ]
     assert {e["row_key"] for e in a_ok} == {'["a1"]', '["a2"]'}
-    # 游標前進到含 stub 在內的最大 id(不卡 B)
+    # 游標前進到全域高水位(不卡)
     assert res["cursor"] == max(e["id"] for e in res["events"])
 
 
 def test_replay_watch_rejects_unpaid_preserves_withheld(tmp_path):
     # 不變式 7 邊界:未付費 replay 不得清掉 withheld(否則永久遺失)
     s = Store.open(tmp_path / "m.db")
-    _, wa = _free_key_watch(s)
+    kid, wa = _free_key_watch(s)
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])
     svc = Service(s)
-    svc.list_changes(None)  # 輪 3 gated
-    rej = svc.replay_watch(wa.id)
+    svc.list_changes(None, caller_key_id=kid)  # 輪 3 gated
+    rej = svc.replay_watch(wa.id, caller_key_id=kid)  # owner 但未付費
     assert rej["events"] == [] and rej.get("error")  # 拒絕
     assert s.withheld_events(wa.id)  # 旗標未清(關鍵)
 
@@ -164,11 +169,11 @@ def test_replay_watch_paid_then_idempotent(tmp_path):
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])
     svc = Service(s)
-    svc.list_changes(None)  # 輪 3 gated
+    svc.list_changes(None, caller_key_id=kid)  # 輪 3 gated
     s.set_api_key_tier(kid, "paid")  # 付費
-    paid = svc.replay_watch(wa.id)
+    paid = svc.replay_watch(wa.id, caller_key_id=kid)
     assert {e["row_key"] for e in paid["events"]} == {'["a3"]'}  # 補拿真實事件
-    assert svc.replay_watch(wa.id)["events"] == []  # 再呼叫回空(已 claim)
+    assert svc.replay_watch(wa.id, caller_key_id=kid)["events"] == []  # 再呼叫回空(已 claim)
 
 
 def test_service_create_watch_persists_metering_params(tmp_path, monkeypatch):
@@ -190,17 +195,24 @@ def test_service_create_watch_persists_metering_params(tmp_path, monkeypatch):
 
 
 def test_changes_http_mirror_shares_gate(tmp_path):
-    # dual-entry:/changes 鏡像與 MCP list_changes 共用 gate(且持久水位不重計)
+    # dual-entry:/changes 鏡像帶 Bearer key 與 MCP list_changes 共用 gate + scope
     from fastapi.testclient import TestClient
 
+    from waste_for_agents.auth import generate_key, hash_key
     from waste_for_agents.server import build_app
 
     s = Store.open(tmp_path / "m.db")
-    _, wa = _free_key_watch(s)
+    key = generate_key()
+    kid = s.create_api_key(key_hash=hash_key(key), tier="free", rate_limit=1000)
+    wa = s.create_watch(
+        "rss", {}, ["id"], [], 3600, source_kind="rolling_window", api_key_id=kid
+    )
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])
     app = build_app(s, tick_s=3600.0)
     with TestClient(app) as client:
-        res = client.get("/changes").json()
+        res = client.get(
+            "/changes", headers={"Authorization": f"Bearer {key}"}
+        ).json()
     gated = [e for e in res["events"] if e.get("gated")]
     assert len(gated) == 1 and gated[0]["row_key"] == '["a3"]'

@@ -12,6 +12,10 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from mcp.server.fastmcp import Context
+
 from .discovery import FeedDiscoveryError, discover_feed
 from .scheduler import scheduler_loop
 from .sources import base
@@ -19,6 +23,10 @@ from .sources.http_json import HttpJsonSource
 from .sources.rss import RssSource
 from .sources.twinkle import TwinkleSource
 from .store import ChangeEvent, Store, Watch
+
+
+# MCP tool 注入用的 Context(三泛型補滿以過 mypy strict;FastMCP 仍以 origin 偵測注入)。
+_Ctx = Context[Any, Any, Any]
 
 
 def register_default_sources() -> None:
@@ -84,10 +92,24 @@ def _watch_dict(w: Watch) -> dict[str, Any]:
 
 
 class Service:
-    """工具邏輯;與傳輸層解耦,回傳一律 JSON-able dict。"""
+    """工具邏輯;與傳輸層解耦,回傳一律 JSON-able dict。
+
+    auth scope:帶 caller_key_id 的方法只作用於該呼叫者歸戶的 watch
+    (caller_key_id=None = 匿名/本地,只見無歸戶 watch),堵 identity↔watch 洩漏。
+    """
 
     def __init__(self, store: Store) -> None:
         self.store = store
+
+    def issue_key(self) -> dict[str, Any]:
+        """自助發放一把 free-tier API key。回明文 key(只此一次)+ id;store 只存 hash。"""
+        from .auth import DEFAULT_FREE_RATE_LIMIT, generate_key, hash_key
+
+        key = generate_key()
+        kid = self.store.create_api_key(
+            hash_key(key), tier="free", rate_limit=DEFAULT_FREE_RATE_LIMIT
+        )
+        return {"api_key": key, "api_key_id": kid}
 
     def create_watch(
         self,
@@ -119,13 +141,25 @@ class Service:
         )
         return {"watch_id": watch.id}
 
-    def list_changes(self, since_cursor: int | None) -> dict[str, Any]:
-        """拉自游標以來的變化,套 per-watch 計費 gate(C-stub)。
+    def _owned_watch_ids(self, caller_key_id: str | None) -> set[str]:
+        """呼叫者歸戶的 watch id 集合(None caller = 無歸戶 watch)。"""
+        return {
+            w.id for w in self.store.list_watches() if w.api_key_id == caller_key_id
+        }
 
-        gated 輪的事件換成升級 stub,游標仍含其 id 照常前進(不變式 9:不卡其他
-        watch)。計量靠持久水位 idempotent → `/changes` 鏡像共用此路徑亦不重計。
+    def list_changes(
+        self, since_cursor: int | None, caller_key_id: str | None = None
+    ) -> dict[str, Any]:
+        """拉自游標以來的變化(只回呼叫者歸戶的 watch),套 per-watch 計費 gate(C-stub)。
+
+        privacy scope:事件先過濾成「呼叫者擁有的 watch」——不洩漏他人訂了什麼。
+        游標仍推進到「全域」高水位(events_since 給的 cursor),呼叫者下次不重掃他人
+        事件;他人事件不誤卡呼叫者。gated 輪事件換升級 stub。計量只動呼叫者自己的
+        watch(持久水位 idempotent → `/changes` 鏡像共用此路徑不重計)。
         """
         events, cursor = self.store.events_since(since_cursor)
+        owned = self._owned_watch_ids(caller_key_id)
+        events = [e for e in events if e.watch_id in owned]
         by_watch: dict[str, list[ChangeEvent]] = {}
         for e in events:
             by_watch.setdefault(e.watch_id, []).append(e)
@@ -140,16 +174,20 @@ class Service:
         ]
         return {"events": out, "cursor": cursor}
 
-    def replay_watch(self, watch_id: str) -> dict[str, Any]:
-        """付費後補拿 withheld 變化。非 paid 直接拒絕,絕不 claim(否則旗標被清、遺失)。
+    def replay_watch(
+        self, watch_id: str, caller_key_id: str | None = None
+    ) -> dict[str, Any]:
+        """付費後補拿 withheld 變化。先驗 ownership 再驗 tier=paid。
 
-        ⚠ 認證缺口(multi-review Critical 2,Chunk 5/THE-10 必補):目前只驗 tier=paid,
-          未驗呼叫者「擁有」該 watch 的 api_key。auth middleware 上線後,replay 必須
-          比對呼叫者身份 == watch.api_key_id,否則知道 watch_id 即可竊取他人 withheld 變化。
+        ownership(M1 multi-review Critical 2):呼叫者身份須 == watch.api_key_id,否則
+        知道 watch_id 即可竊取他人 withheld 變化。非擁有者**在觸及 claim 前**即拒,旗標
+        不被清(否則別人一呼叫就把 withheld 翻 0、事件永久遺失)。非 paid 同理只拒不 claim。
         """
         watch = self.store.get_watch(watch_id)
         if watch is None:
             return {"events": [], "error": "watch not found"}
+        if watch.api_key_id != caller_key_id:
+            return {"events": [], "error": "無權存取此 watch"}
         tier = (
             self.store.get_api_key_tier(watch.api_key_id) if watch.api_key_id else None
         )
@@ -158,23 +196,61 @@ class Service:
         events = self.store.claim_withheld(watch_id)
         return {"events": [_event_dict(e) for e in events]}
 
-    def list_watches(self) -> dict[str, Any]:
-        return {"watches": [_watch_dict(w) for w in self.store.list_watches()]}
+    def list_watches(self, caller_key_id: str | None = None) -> dict[str, Any]:
+        """只列呼叫者歸戶的 watch(privacy:不洩漏他人訂閱)。"""
+        return {
+            "watches": [
+                _watch_dict(w)
+                for w in self.store.list_watches()
+                if w.api_key_id == caller_key_id
+            ]
+        }
 
-    def delete_watch(self, watch_id: str) -> dict[str, Any]:
+    def delete_watch(
+        self, watch_id: str, caller_key_id: str | None = None
+    ) -> dict[str, Any]:
+        """刪 watch;須為呼叫者歸戶(非擁有者拒,連帶不洩漏是否存在以外的資訊)。"""
+        watch = self.store.get_watch(watch_id)
+        if watch is None:
+            return {"deleted": False}
+        if watch.api_key_id != caller_key_id:
+            return {"deleted": False, "error": "無權存取此 watch"}
         return {"deleted": self.store.delete_watch(watch_id)}
 
 
 def build_app(store: Store, tick_s: float = 5.0) -> Any:
-    """組 FastAPI app:綁 Service 的四個 MCP tool + lifespan 啟動排程器。"""
+    """組 FastAPI app:綁 Service 的 MCP tool + lifespan 啟動排程器。
+
+    auth:MCP tool 從 Bearer header(Context 的底層 HTTP request)取 key、驗證 + rate
+    limit;失敗回 {error}。issue_key 不需 auth(自助發放)。/changes 鏡像 header 選填
+    (有則 scope 到該 key、無則只見無歸戶 watch)。
+    """
     from mcp.server.fastmcp import FastMCP
 
+    from .auth import AuthError, RateLimiter, authenticate, bearer_key
+
     service = Service(store)
+    rate_limiter = RateLimiter()
+
+    def _caller_from_ctx(ctx: _Ctx) -> str:
+        """從 MCP 請求的底層 HTTP request 取 Bearer key、驗證,回 api_key_id;失敗拋 AuthError。"""
+        req = getattr(ctx.request_context, "request", None)
+        headers = getattr(req, "headers", {}) if req is not None else {}
+        return authenticate(store, rate_limiter, bearer_key(headers)).id
     # streamable_http_path="/":streamable app 內部路由設為 /,mount 在 /mcp 後
     # 對外端點即 /mcp/(否則預設 /mcp mount 在 /mcp 會疊成 /mcp/mcp)。
     mcp = FastMCP(
         name="waste-for-agents", instructions=INSTRUCTIONS, streamable_http_path="/"
     )
+
+    @mcp.tool()
+    def issue_key() -> dict[str, Any]:
+        """自助發放一把 free-tier API key。回 {api_key, api_key_id}。(write,免認證)
+
+        api_key 只回這一次——存好它,之後所有呼叫用 `Authorization: Bearer <api_key>`
+        帶上。server 只存雜湊,遺失無法找回。
+        """
+        return service.issue_key()
 
     @mcp.tool()
     def create_watch(
@@ -184,47 +260,65 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         ignore_columns: list[str],
         interval_s: int = 300,
         source_kind: str | None = None,
-        api_key_id: str | None = None,
+        *,
+        ctx: _Ctx,
     ) -> dict[str, Any]:
-        """訂閱一個結構化來源的 query。回 {watch_id}。(write)
+        """訂閱一個結構化來源的 query。回 {watch_id}。需 Bearer key。(write)
 
+        watch 自動歸戶到呼叫者的 api_key(計費 + privacy:只有你看得到自己的 watch)。
         source_kind:省略則取 source 預設(rss=rolling_window、其餘 dataset);亦可顯式
-        傳 'dataset'(完整資料集)或 'rolling_window'(RSS;added 對 seen-set、不報
-        removed)。source='rss' 時 query.url 可給首頁,會自動 discover feed。
-        api_key_id:計費歸戶(free tier 觸發計費 gate)。
+        傳 'dataset' / 'rolling_window'。source='rss' 時 query.url 可給首頁,自動 discover feed。
         """
-        # ⚠ 濫用面(MVP 缺口,開放給可信任 tester 以外前必補,見 TODOS.md / README 安全段):
-        #   query 原樣透傳給 TwinkleSource → Twinkle query_rows 接受 raw SQL where/group_by。
-        #   create_watch 因此 = 借用維運者 token 的「持久排程 raw-SQL 執行 primitive」。
-        #   目前無 query 驗證、無 rate-limit、無 interval 下限、無 source 白名單強制(Chunk 5 補)。
+        # ⚠ 濫用面殘留(Task 5.3 後仍部分):query 原樣透傳給 TwinkleSource → raw SQL。
+        #   auth + rate-limit 已擋匿名濫用;query 內容驗證仍後置(見 TODOS.md)。
+        try:
+            caller = _caller_from_ctx(ctx)
+        except AuthError as e:
+            return {"error": f"unauthorized: {e}"}
         return service.create_watch(
             source, query, key_columns, ignore_columns, interval_s,
-            source_kind=source_kind, api_key_id=api_key_id,
+            source_kind=source_kind, api_key_id=caller,
         )
 
     @mcp.tool()
-    def list_changes(since_cursor: int | None = None) -> dict[str, Any]:
-        """拉自 since_cursor 以來的變化。回 {events, cursor};無變化回空。(read)
+    def list_changes(since_cursor: int | None = None, *, ctx: _Ctx) -> dict[str, Any]:
+        """拉自 since_cursor 以來、你自己 watch 的變化。回 {events, cursor}。需 Bearer key。(read)
 
-        免費額度用完的 watch,其變化回 gated stub(含升級提示);付費後用
-        replay_watch 補拿。
+        只回呼叫者歸戶的 watch(privacy)。免費額度用完的 watch 回 gated stub;
+        付費後用 replay_watch 補拿。
         """
-        return service.list_changes(since_cursor)
+        try:
+            caller = _caller_from_ctx(ctx)
+        except AuthError as e:
+            return {"error": f"unauthorized: {e}", "events": [], "cursor": since_cursor}
+        return service.list_changes(since_cursor, caller_key_id=caller)
 
     @mcp.tool()
-    def replay_watch(watch_id: str) -> dict[str, Any]:
-        """付費後補拿某 watch 被保留(withheld)的變化。回 {events}(或 error)。(read)"""
-        return service.replay_watch(watch_id)
+    def replay_watch(watch_id: str, *, ctx: _Ctx) -> dict[str, Any]:
+        """付費後補拿你自己某 watch 被保留(withheld)的變化。回 {events}(或 error)。需 Bearer key。(read)"""
+        try:
+            caller = _caller_from_ctx(ctx)
+        except AuthError as e:
+            return {"error": f"unauthorized: {e}", "events": []}
+        return service.replay_watch(watch_id, caller_key_id=caller)
 
     @mcp.tool()
-    def list_watches() -> dict[str, Any]:
-        """列出所有監看 + 各自 status(含 last_error)。(read)"""
-        return service.list_watches()
+    def list_watches(*, ctx: _Ctx) -> dict[str, Any]:
+        """列出你自己的監看 + 各自 status(含 last_error)。需 Bearer key。(read)"""
+        try:
+            caller = _caller_from_ctx(ctx)
+        except AuthError as e:
+            return {"error": f"unauthorized: {e}", "watches": []}
+        return service.list_watches(caller_key_id=caller)
 
     @mcp.tool()
-    def delete_watch(watch_id: str) -> dict[str, Any]:
-        """刪除一個監看。回 {deleted}。(write)"""
-        return service.delete_watch(watch_id)
+    def delete_watch(watch_id: str, *, ctx: _Ctx) -> dict[str, Any]:
+        """刪除你自己的一個監看。回 {deleted}。需 Bearer key。(write)"""
+        try:
+            caller = _caller_from_ctx(ctx)
+        except AuthError as e:
+            return {"error": f"unauthorized: {e}", "deleted": False}
+        return service.delete_watch(watch_id, caller_key_id=caller)
 
     from fastapi import FastAPI
 
@@ -247,9 +341,20 @@ def build_app(store: Store, tick_s: float = 5.0) -> Any:
         return {"status": "ok", "watches": len(store.list_watches())}
 
     @app.get("/changes")
-    def changes(since: int | None = None) -> dict[str, Any]:
-        """list_changes 的唯讀 HTTP 鏡像,給 shell 端 SessionStart hook 用(read-free)。"""
-        return service.list_changes(since)
+    def changes(request: Request, since: int | None = None) -> Any:
+        """list_changes 的唯讀 HTTP 鏡像,給 shell 端 SessionStart hook 用。
+
+        Authorization: Bearer <key> 選填——有則 scope 到該 key 的 watch(計量共用持久
+        水位、不重計);無則只見無歸戶(本地/dogfood)watch。給了但無效 → 401。
+        """
+        key = bearer_key(request.headers)
+        caller: str | None = None
+        if key is not None:
+            try:
+                caller = authenticate(store, rate_limiter, key).id
+            except AuthError:
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return service.list_changes(since, caller_key_id=caller)
 
     app.mount("/mcp", mcp.streamable_http_app())
     return app
