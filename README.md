@@ -52,26 +52,65 @@ X-Tristero-Status: Silent
 
 ## MCP tools
 
+所有 tool(除 `issue_key`)需 `Authorization: Bearer <api_key>`;watch 自動歸戶呼叫者,`list_*` 只回你自己的(privacy)。
+
 | tool | 類型 | 說明 |
 |------|------|------|
-| `create_watch(source, query, key_columns, ignore_columns, interval_s)` | write | 建立一個監看 |
-| `list_changes(since_cursor)` | read | 拉自游標以來的變化(無變化秒回 no-op) |
-| `list_watches()` | read | 列出監看 + 各自 status(含 `last_error`) |
-| `delete_watch(watch_id)` | write | 刪除監看 |
+| `issue_key()` | write(免認證) | 自助發一把 free-tier key;回明文一次(只存 hash) |
+| `create_watch(source, query, key_columns, ignore_columns, interval_s)` | write | 建立一個監看(歸戶呼叫者) |
+| `list_changes(since_cursor)` | read | 拉自游標以來、你自己 watch 的變化(無變化秒回 no-op) |
+| `replay_watch(watch_id)` | read | 付費後補拿被 gate 保留(withheld)的變化 |
+| `list_watches()` | read | 列出你自己的監看 + 各自 status(含 `last_error`) |
+| `delete_watch(watch_id)` | write | 刪除你自己的監看 |
 
-唯讀 HTTP 鏡像:`GET /changes?since=<cursor>` 等價 `list_changes`,供 shell 端 hook 用(免 MCP handshake)。健康檢查 `GET /health`。
+唯讀 HTTP 鏡像:`GET /changes?since=<cursor>`(`Authorization` 選填,有則 scope)等價 `list_changes`,供 shell 端 hook 用(免 MCP handshake)。健康檢查 `GET /health`。
 
 ## Quickstart — the drop
 
 ```bash
-# 1. 起常駐服務(TwinkleSource 需要 token;1Password: op://employee/twinkle hub/token)
-export TWINKLE_TOKEN=...
+# 1. 起常駐服務(落地物進單一 data dir ~/.waste-for-agents/;TwinkleSource 才需 token)
 uv run python -m waste_for_agents serve --port 8848
 #    health:  curl http://127.0.0.1:8848/health        → {"status":"ok",...}
 #    mcp 端點: curl http://127.0.0.1:8848/mcp/           → 406(FastMCP 健康訊號)
 
-# 2. 把它加進 agent(Claude Code)
-claude mcp add --transport http waste http://127.0.0.1:8848/mcp/
+# 2. 領一把 free key(issue_key 免認證);之後所有呼叫帶 Authorization: Bearer <key>
+#    可先不帶 key 連上、呼叫 issue_key 拿 key,再重設帶 header 的連線。
+
+# 3. 把它加進 agent(Claude Code)——header 設一次,所有呼叫自動帶上
+claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
+  --header "Authorization: Bearer wfa_<your-key>"
+```
+
+### dogfood:監看 Hacker News
+
+最小可跑範例(RSS source,agent-first:給首頁也會自動 discover feed):
+
+```jsonc
+// 訂閱 HN 首頁變化(rolling_window 預設:新文 added、舊文滾出不報 removed)
+// rss source 的 query 形狀:{ "url": "<feed 或首頁 url>", "headers"?: {...} }
+create_watch(
+  source="rss",
+  query={ "url": "https://news.ycombinator.com/rss" },
+  key_columns=["id"],
+  ignore_columns=[],
+  interval_s=3600)
+
+// 之後每次醒來:沉默,或一批新貼文降臨(content 已轉乾淨 Markdown)
+list_changes()
+// → {"events": [
+//      { "id": 12, "watch_id": "...", "kind": "added",
+//        "row_key": "[\"<id>\"]", "run_seq": 3,
+//        "detail": { "row": { "id": "...", "title": "...", "content": "<markdown>", ... } } }
+//    ], "cursor": 12}
+// 免費額度用完的輪:該事件變 {"gated": true, ...} stub,付費後 replay_watch 補拿。
+```
+
+實測:HN feed 一輪約 30 篇,穩定 id(guid/link)、`content` 轉 Markdown;同批重抓 0 event(`WASTE_LIVE_RSS=1 uv run pytest tests/test_hn_live.py`)。
+
+### 進階:Twinkle(台灣開放資料)
+
+```bash
+export TWINKLE_TOKEN=...   # 1Password: op://employee/twinkle hub/token
 ```
 
 接著在 agent 裡:
