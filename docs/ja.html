@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>posthorn — AI エージェントのための RSS 購読</title>
+<meta name="description" content="AI エージェントのための pull-first な RSS 購読レイヤー。一度購読すれば、エージェントはひとつの静かなチャネルに尋ね、本当の変化だけを受け取ります。">
+<link rel="stylesheet" href="assets/tristero.css">
+</head>
+<body>
+
+<nav class="site-nav"><div class="wrap row">
+  <a class="brand" href="index.html">
+    <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    <span class="wordmark">posthorn</span><span class="brand-tag">エージェントのための RSS 購読</span>
+  </a>
+  <div class="nav-spacer"></div>
+  <nav class="langbar" aria-label="Language">
+    <a href="index.html">EN</a><a href="pt.html">PT</a><a class="on" href="ja.html">日本語</a><a href="ko.html">한국어</a>
+  </nav>
+</div></nav>
+
+<a id="top"></a>
+
+<header class="hero"><div class="wrap hero-grid">
+  <div>
+    <div class="eyebrow"><span class="label">W·A·S·T·E — 消音された郵便ホルン</span></div>
+    <h1>AI エージェントのための<br>RSS 購読</h1>
+    <p class="sub">エージェントが見張りたいフィードのための、頼れる配送係。一度購読すれば、ひとつの静かなチャネルを開いたまま、本当の変化だけを受け取ります。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#setup">ローカルで動かす ↓</a>
+      <a class="btn btn-secondary" href="https://github.com/elekli/waste-for-agents">ソースを見る</a>
+    </div>
+  </div>
+  <div class="hero-art">
+    <span class="stamp" aria-hidden="true"><span class="inner">
+      <svg class="horn" viewBox="0 0 80 80" fill="none"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    </span></span>
+    <div class="term" style="width:100%">
+      <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · 投函</div>
+<pre><span class="c-com"># エージェントが目を覚まし、一度だけ尋ねる</span>
+<span class="c-fn">list_changes</span>()
+<span class="c-com"># たいていは沈黙 — 上流で何も変わっていない:</span>
+{ <span class="c-str">"events"</span>: [], <span class="c-str">"cursor"</span>: 41 }
+
+<span class="c-com"># そしてある日、ホルンが鳴る:</span>
+{ <span class="c-str">"events"</span>: [{ <span class="c-str">"kind"</span>:<span class="c-str">"added"</span>,
+    <span class="c-str">"title"</span>:<span class="c-str">"Show HN: …"</span>,
+    <span class="c-str">"content"</span>:<span class="c-str">"&lt;clean markdown&gt;"</span> }],
+  <span class="c-str">"cursor"</span>: 42 }</pre>
+    </div>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">5 分で手に入るもの</span></div>
+  <h2 class="sec">あなたが眠る間も動くポーラー</h2>
+  <p class="sec-lead">ローカルサーバーが定期的にフィードを巡回し、本当の変化だけを蓄積します。受け渡しは 2 通り:エージェント向けの <strong>MCP ツール</strong>(Claude Code など)と、素の <strong>HTTP エンドポイント</strong> — <code class="inl">GET /changes</code> — で、<code class="inl">curl</code> で cron や Slack の webhook、別のサービスへ流し込めます。</p>
+  <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;margin-top:var(--space-5)">
+    <span class="badge ok"><span class="dot"></span>本物の差分 — timestamp のノイズを無視</span>
+    <span class="badge info"><span class="dot"></span>本文はきれいな Markdown</span>
+    <span class="badge silent"><span class="dot"></span>沈黙こそ no-op</span>
+  </div>
+  <div class="callout teal" style="margin-top:var(--space-6)">
+    <span class="ic">i</span>
+    <p><strong>前提条件。</strong> Python 3.12+、<a href="https://docs.astral.sh/uv/">uv</a>、<a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a>(エージェント経路のみ必要;HTTP 経路は <code class="inl">curl</code> だけで足ります)。</p>
+  </div>
+</div></section>
+
+<section id="setup"><div class="wrap">
+  <div class="eyebrow"><span class="label">セットアップ · セルフホスト</span></div>
+  <h2 class="sec">最初の投函までの 4 ステップ</h2>
+
+  <div class="steps">
+    <div class="step"><div class="num">1</div><div class="body">
+      <h3>クローンしてサーバーを起動</h3>
+      <p class="note"><code class="inl">--unmetered</code> は課金ゲートを無効にします — 自分のマシンで動かしているのですから、ホスト版向けの無料枠で制限される筋合いはありません。</p>
+      <div class="term"><div class="bar">ターミナル</div>
+<pre><span class="c-com"># 生成物は ~/.waste-for-agents/ に置かれる</span>
+git clone https://github.com/elekli/waste-for-agents.git &amp;&amp; cd waste-for-agents
+uv run python -m waste_for_agents serve --port 8848 --unmetered &amp;
+<span class="c-com"># ヘルス:</span> curl http://127.0.0.1:8848/health  <span class="c-com">→ {"status":"ok"}</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">2</div><div class="body">
+      <h3>自分用のキーを発行</h3>
+      <p class="note">ローカル DB に直接キーを書き込んで表示します。(鶏と卵の問題を回避:MCP ヘッダーにはキーが必要ですが、セルフサーブの <code class="inl">issue_key</code> ツールを使うには先に接続している必要があります。)</p>
+      <div class="term"><div class="bar">ターミナル</div>
+<pre>KEY=$(uv run python -m waste_for_agents issue-key)
+echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">3</div><div class="body">
+      <h3>MCP サーバーを登録 <span class="badge info" style="vertical-align:middle"><span class="dot"></span>エージェント経路</span></h3>
+      <div class="callout"><span class="ic">!</span><p><strong>順序が重要。</strong> Claude Code を起動(または再起動)する <em>前</em> にサーバーを追加してください。セッション中に登録したサーバーは、実行中のセッションにツールを読み込み <strong>ません</strong>。</p></div>
+      <div class="term"><div class="bar">ターミナル</div>
+<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
+  --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+<span class="c-com"># その後、新しい Claude Code セッションを開始</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">4</div><div class="body">
+      <h3>購読して引き出す</h3>
+      <p class="note">エージェントで:watch を作成し、変化を引き出します。トップページの URL を渡せば、ディスカバリーがフィードを見つけます(<code class="inl">&lt;link&gt;</code>、次に <code class="inl">/feed</code>、<code class="inl">/rss</code> …の順に試します)。</p>
+      <div class="term"><div class="bar">エージェント内で</div>
+<pre><span class="c-fn">create_watch</span>(
+  source=<span class="c-str">"rss"</span>,
+  query={<span class="c-str">"url"</span>: <span class="c-str">"https://news.ycombinator.com/news"</span>},
+  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)
+
+<span class="c-fn">list_changes</span>()   <span class="c-com"># 最初の起動でまとめて、その後は何か変わるまで沈黙</span></pre></div>
+    </div></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">ワークフローに組み込む</span><span class="badge silent"><span class="dot"></span>エージェント不要</span></div>
+  <h2 class="sec">curl ひとつでどこへでも</h2>
+  <p class="sec-lead">サーバーは動いている間、自分で巡回します。変化をどこかへ流すには、HTTP ミラーをポーリングして転送します。カーソルは実行の合間にあなたが保持し、差分はサーバーが保持します。</p>
+  <div class="term"><div class="bar">crontab — 15 分ごと → Slack</div>
+<pre><span class="c-com"># HN の新しい変化を Slack の webhook へ転送</span>
+*/15 * * * *  C=$(cat ~/.wfa_cursor 2&gt;/dev/null); \
+  R=$(curl -s <span class="c-str">"http://127.0.0.1:8848/changes?since=$C"</span> -H <span class="c-str">"Authorization: Bearer $KEY"</span>); \
+  echo $R | jq <span class="c-str">'.cursor'</span> &gt; ~/.wfa_cursor; \
+  echo $R | jq -c <span class="c-str">'.events[]'</span> | while read e; do curl -s -X POST $SLACK_WEBHOOK -d "$e"; done</pre></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm)"><code class="inl">{"events": [], "cursor": N}</code> を返す <code class="inl">list_changes</code> は、消音されたホルンです — 上流で何も変わっていない。これはエラーではなく、正常な状態です。</p>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">現場メモ</span></div>
+  <h2 class="sec">つまずきやすいところ</h2>
+  <table class="ledger">
+    <thead><tr><th style="width:26%">症状</th><th style="width:40%">何が起きているか</th><th>対処</th></tr></thead>
+    <tbody>
+      <tr><td><code class="inl">403 Forbidden</code> がトップページで出る</td><td>サイトがブラウザの User-Agent なしのリクエストを拒否している。</td><td class="fix">付ける:<code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
+      <tr><td>200 OK なのに「no feed found」</td><td>検出できる <code class="inl">&lt;link rel=alternate&gt;</code> がなく、よくあるパスも解決しなかった。</td><td class="fix">フィードの URL を直接渡す(多くは <code class="inl">/feed</code> か <code class="inl">/rss</code>)。</td></tr>
+      <tr><td>エージェントがツールを見つけられない</td><td>MCP サーバーをセッション開始後に追加した。</td><td class="fix"><code class="inl">claude mcp add</code> の後で Claude Code を再起動する。</td></tr>
+      <tr><td>2 回目のポーリングで同じ項目が出る</td><td><code class="inl">list_changes</code> はカーソルを代わりに覚えてくれない。</td><td class="fix">返ってきた <code class="inl">cursor</code> を <code class="inl">since_cursor</code> として渡す。</td></tr>
+      <tr><td>もっと多くの項目が欲しい</td><td>件数の調整つまみはない — 項目数はフィードが出す通り(HN ≈ 30、多くのブログ ≈ 10–15)。</td><td class="fix">ソース自身のページ送りフィード URL があれば、それを使う。</td></tr>
+    </tbody>
+  </table>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">撤収</span></div>
+  <h2 class="sec">痕跡を残さない</h2>
+  <div class="term" style="max-width:560px"><div class="bar">ターミナル</div>
+<pre>uv run python -m waste_for_agents teardown   <span class="c-com"># ~/.waste-for-agents/ を削除</span></pre></div>
+</div></section>
+
+<footer><div class="wrap">
+  <div class="lock">
+    <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    <div>
+      <p class="acr">W·A·S·T·E</p>
+      <p class="exp">We Await Silent Tristero's Empire</p>
+    </div>
+  </div>
+  <p class="silent">ホルンはわざと消音されています。no-op はシステムが働いている証:完全な沈黙、そして現実が動いたとき、ホルンが一度だけ鳴る。</p>
+  <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
+</div></footer>
+
+</body>
+</html>

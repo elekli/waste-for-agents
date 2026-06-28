@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>posthorn — Assinaturas de RSS para agentes de IA</title>
+<meta name="description" content="Uma camada de assinatura de RSS pull-first para agentes de IA. Assine uma vez; seu agente pergunta a um canal silencioso e recebe de volta apenas as mudanças reais.">
+<link rel="stylesheet" href="assets/tristero.css">
+</head>
+<body>
+
+<nav class="site-nav"><div class="wrap row">
+  <a class="brand" href="index.html">
+    <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    <span class="wordmark">posthorn</span><span class="brand-tag">assinatura de RSS para agentes</span>
+  </a>
+  <div class="nav-spacer"></div>
+  <nav class="langbar" aria-label="Language">
+    <a href="index.html">EN</a><a class="on" href="pt.html">PT</a><a href="ja.html">日本語</a><a href="ko.html">한국어</a>
+  </nav>
+</div></nav>
+
+<a id="top"></a>
+
+<header class="hero"><div class="wrap hero-grid">
+  <div>
+    <div class="eyebrow"><span class="label">W·A·S·T·E — a corneta silenciada</span></div>
+    <h1>Assinaturas de RSS para agentes de&nbsp;IA</h1>
+    <p class="sub">O despachante de confiança do seu agente para qualquer feed que ele precise acompanhar. Assine uma vez — ele mantém um canal silencioso aberto e recebe de volta apenas as&nbsp;mudanças&nbsp;reais.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#setup">Rodar localmente ↓</a>
+      <a class="btn btn-secondary" href="https://github.com/elekli/waste-for-agents">Ver o código</a>
+    </div>
+  </div>
+  <div class="hero-art">
+    <span class="stamp" aria-hidden="true"><span class="inner">
+      <svg class="horn" viewBox="0 0 80 80" fill="none"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    </span></span>
+    <div class="term" style="width:100%">
+      <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · a entrega</div>
+<pre><span class="c-com"># seu agente acorda e pergunta uma vez</span>
+<span class="c-fn">list_changes</span>()
+<span class="c-com"># normalmente silêncio — nada mudou na origem:</span>
+{ <span class="c-str">"events"</span>: [], <span class="c-str">"cursor"</span>: 41 }
+
+<span class="c-com"># então, um dia, a corneta soa:</span>
+{ <span class="c-str">"events"</span>: [{ <span class="c-str">"kind"</span>:<span class="c-str">"added"</span>,
+    <span class="c-str">"title"</span>:<span class="c-str">"Show HN: …"</span>,
+    <span class="c-str">"content"</span>:<span class="c-str">"&lt;clean markdown&gt;"</span> }],
+  <span class="c-str">"cursor"</span>: 42 }</pre>
+    </div>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">O que você terá em 5 minutos</span></div>
+  <h2 class="sec">Um coletor que roda enquanto você dorme</h2>
+  <p class="sec-lead">Um servidor local consulta seus feeds em intervalos e acumula apenas as mudanças reais. Ele as entrega de duas formas: como <strong>ferramentas MCP</strong> para o seu agente (Claude Code e afins) e como um <strong>endpoint HTTP</strong> simples — <code class="inl">GET /changes</code> — que você encaminha com <code class="inl">curl</code> para um cron, um webhook do Slack ou outro serviço.</p>
+  <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;margin-top:var(--space-5)">
+    <span class="badge ok"><span class="dot"></span>Diff real — ignora ruído de timestamp</span>
+    <span class="badge info"><span class="dot"></span>Conteúdo em Markdown limpo</span>
+    <span class="badge silent"><span class="dot"></span>O silêncio é o no-op</span>
+  </div>
+  <div class="callout teal" style="margin-top:var(--space-6)">
+    <span class="ic">i</span>
+    <p><strong>Pré-requisitos.</strong> Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a> e <a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a> (apenas para o caminho do agente; o caminho HTTP precisa só de <code class="inl">curl</code>).</p>
+  </div>
+</div></section>
+
+<section id="setup"><div class="wrap">
+  <div class="eyebrow"><span class="label">Instalação · auto-hospedado</span></div>
+  <h2 class="sec">Quatro passos até a sua primeira entrega</h2>
+
+  <div class="steps">
+    <div class="step"><div class="num">1</div><div class="body">
+      <h3>Clone e inicie o servidor</h3>
+      <p class="note"><code class="inl">--unmetered</code> desliga o portão de cobrança — você está na sua própria máquina; não deveria ser limitado por uma cota gratuita pensada para o serviço hospedado.</p>
+      <div class="term"><div class="bar">terminal</div>
+<pre><span class="c-com"># o estado fica em ~/.waste-for-agents/</span>
+git clone https://github.com/elekli/waste-for-agents.git &amp;&amp; cd waste-for-agents
+uv run python -m waste_for_agents serve --port 8848 --unmetered &amp;
+<span class="c-com"># saúde:</span> curl http://127.0.0.1:8848/health  <span class="c-com">→ {"status":"ok"}</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">2</div><div class="body">
+      <h3>Emita uma chave para você</h3>
+      <p class="note">Grava uma chave direto no banco local e a imprime. (Resolve um problema do ovo e da galinha: o cabeçalho MCP precisa de uma chave, mas a ferramenta <code class="inl">issue_key</code> exige que você já esteja conectado.)</p>
+      <div class="term"><div class="bar">terminal</div>
+<pre>KEY=$(uv run python -m waste_for_agents issue-key)
+echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">3</div><div class="body">
+      <h3>Registre o servidor MCP <span class="badge info" style="vertical-align:middle"><span class="dot"></span>caminho do agente</span></h3>
+      <div class="callout"><span class="ic">!</span><p><strong>A ordem importa.</strong> Adicione o servidor <em>antes</em> de iniciar (ou reiniciar) o Claude Code. Um servidor registrado no meio da sessão <strong>não</strong> carrega suas ferramentas na sessão em andamento.</p></div>
+      <div class="term"><div class="bar">terminal</div>
+<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
+  --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+<span class="c-com"># depois inicie uma nova sessão do Claude Code</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">4</div><div class="body">
+      <h3>Assine e drene</h3>
+      <p class="note">No seu agente: crie um watch e puxe as mudanças. Passe a URL da página inicial — a descoberta encontra o feed (tenta <code class="inl">&lt;link&gt;</code>, depois <code class="inl">/feed</code>, <code class="inl">/rss</code>…).</p>
+      <div class="term"><div class="bar">no seu agente</div>
+<pre><span class="c-fn">create_watch</span>(
+  source=<span class="c-str">"rss"</span>,
+  query={<span class="c-str">"url"</span>: <span class="c-str">"https://news.ycombinator.com/news"</span>},
+  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)
+
+<span class="c-fn">list_changes</span>()   <span class="c-com"># um lote no primeiro despertar, depois silêncio até algo mudar</span></pre></div>
+    </div></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">Conecte a um fluxo de trabalho</span><span class="badge silent"><span class="dot"></span>sem agente</span></div>
+  <h2 class="sec">Um curl para qualquer coisa</h2>
+  <p class="sec-lead">O servidor consulta sozinho enquanto roda. Para enviar as mudanças a qualquer lugar, consulte o espelho HTTP e encaminhe. Você guarda o cursor entre as execuções; o servidor guarda o diff.</p>
+  <div class="term"><div class="bar">crontab — a cada 15 min → Slack</div>
+<pre><span class="c-com"># encaminha novas mudanças do HN para um webhook do Slack</span>
+*/15 * * * *  C=$(cat ~/.wfa_cursor 2&gt;/dev/null); \
+  R=$(curl -s <span class="c-str">"http://127.0.0.1:8848/changes?since=$C"</span> -H <span class="c-str">"Authorization: Bearer $KEY"</span>); \
+  echo $R | jq <span class="c-str">'.cursor'</span> &gt; ~/.wfa_cursor; \
+  echo $R | jq -c <span class="c-str">'.events[]'</span> | while read e; do curl -s -X POST $SLACK_WEBHOOK -d "$e"; done</pre></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm)">Um <code class="inl">list_changes</code> que retorna <code class="inl">{"events": [], "cursor": N}</code> é a corneta silenciada — nada mudou na origem. Esse é o estado normal, não um erro.</p>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">Notas de campo</span></div>
+  <h2 class="sec">O que costuma pegar as pessoas</h2>
+  <table class="ledger">
+    <thead><tr><th style="width:26%">Sintoma</th><th style="width:40%">O que está acontecendo</th><th>Solução</th></tr></thead>
+    <tbody>
+      <tr><td><code class="inl">403 Forbidden</code> numa página inicial</td><td>O site bloqueia requisições sem um User-Agent de navegador.</td><td class="fix">Adicione um: <code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
+      <tr><td>"no feed found" com 200 OK</td><td>Sem <code class="inl">&lt;link rel=alternate&gt;</code> detectável, e os caminhos comuns não resolveram.</td><td class="fix">Passe a URL do feed diretamente (em geral <code class="inl">/feed</code> ou <code class="inl">/rss</code>).</td></tr>
+      <tr><td>O agente não vê as ferramentas</td><td>O servidor MCP foi adicionado depois que a sessão começou.</td><td class="fix">Reinicie o Claude Code após <code class="inl">claude mcp add</code>.</td></tr>
+      <tr><td>A segunda consulta repete itens</td><td><code class="inl">list_changes</code> não guarda o cursor por você.</td><td class="fix">Devolva o <code class="inl">cursor</code> retornado como <code class="inl">since_cursor</code>.</td></tr>
+      <tr><td>Quer mais itens do que recebe</td><td>Sem controle de quantidade — o número de itens é o que o feed publica (HN ≈ 30, muitos blogs ≈ 10–15).</td><td class="fix">Use a URL paginada do próprio feed, se houver.</td></tr>
+    </tbody>
+  </table>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">Desmontar</span></div>
+  <h2 class="sec">Sem deixar rastro</h2>
+  <div class="term" style="max-width:560px"><div class="bar">terminal</div>
+<pre>uv run python -m waste_for_agents teardown   <span class="c-com"># remove ~/.waste-for-agents/</span></pre></div>
+</div></section>
+
+<footer><div class="wrap">
+  <div class="lock">
+    <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    <div>
+      <p class="acr">W·A·S·T·E</p>
+      <p class="exp">We Await Silent Tristero's Empire</p>
+    </div>
+  </div>
+  <p class="silent">A corneta está silenciada de propósito. Um no-op é o sistema funcionando: silêncio absoluto, até a realidade mudar e a corneta soar uma vez.</p>
+  <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
+</div></footer>
+
+</body>
+</html>
