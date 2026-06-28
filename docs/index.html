@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>posthorn — RSS subscriptions for AI agents</title>
+<meta name="description" content="A pull-first RSS subscription layer for AI agents. Subscribe once; your agent asks one silent channel and gets back only the real changes.">
+<link rel="stylesheet" href="assets/tristero.css">
+</head>
+<body>
+
+<nav class="site-nav"><div class="wrap row">
+  <a class="brand" href="index.html">
+    <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    <span class="wordmark">posthorn</span><span class="brand-tag">RSS subscription for agents</span>
+  </a>
+  <div class="nav-spacer"></div>
+  <nav class="langbar" aria-label="Language">
+    <a class="on" href="index.html">EN</a><a href="pt.html">PT</a><a href="ja.html">日本語</a><a href="ko.html">한국어</a>
+  </nav>
+</div></nav>
+
+<a id="top"></a>
+
+<header class="hero"><div class="wrap hero-grid">
+  <div>
+    <div class="eyebrow"><span class="label">W·A·S·T·E — the muted post horn</span></div>
+    <h1>RSS subscriptions for&nbsp;AI&nbsp;agents</h1>
+    <p class="sub">Your agent's go-to dispatcher for any feed it needs to watch. Subscribe once — it keeps one silent channel open and gets back only the&nbsp;real&nbsp;changes.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#setup">Run it locally ↓</a>
+      <a class="btn btn-secondary" href="https://github.com/elekli/waste-for-agents">View source</a>
+    </div>
+  </div>
+  <div class="hero-art">
+    <span class="stamp" aria-hidden="true"><span class="inner">
+      <svg class="horn" viewBox="0 0 80 80" fill="none"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    </span></span>
+    <div class="term" style="width:100%">
+      <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · the drop</div>
+<pre><span class="c-com"># your agent wakes, asks once</span>
+<span class="c-fn">list_changes</span>()
+<span class="c-com"># usually silence — nothing shifted upstream:</span>
+{ <span class="c-str">"events"</span>: [], <span class="c-str">"cursor"</span>: 41 }
+
+<span class="c-com"># then one day, the horn sounds:</span>
+{ <span class="c-str">"events"</span>: [{ <span class="c-str">"kind"</span>:<span class="c-str">"added"</span>,
+    <span class="c-str">"title"</span>:<span class="c-str">"Show HN: …"</span>,
+    <span class="c-str">"content"</span>:<span class="c-str">"&lt;clean markdown&gt;"</span> }],
+  <span class="c-str">"cursor"</span>: 42 }</pre>
+    </div>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">What you'll have in 5 minutes</span></div>
+  <h2 class="sec">A poller that runs while you sleep</h2>
+  <p class="sec-lead">A local server polls your feeds on a schedule and accumulates only the real changes. It hands them over two ways: as <strong>MCP tools</strong> for your agent (Claude Code &amp; friends), and as a plain <strong>HTTP endpoint</strong> — <code class="inl">GET /changes</code> — you can <code class="inl">curl</code> into a cron job, a Slack webhook, or another service.</p>
+  <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;margin-top:var(--space-5)">
+    <span class="badge ok"><span class="dot"></span>True diff — ignores timestamp churn</span>
+    <span class="badge info"><span class="dot"></span>Content as clean Markdown</span>
+    <span class="badge silent"><span class="dot"></span>Silence is the no-op</span>
+  </div>
+  <div class="callout teal" style="margin-top:var(--space-6)">
+    <span class="ic">i</span>
+    <p><strong>Prerequisites.</strong> Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a>, and <a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a> (only for the agent path; the HTTP path needs just <code class="inl">curl</code>).</p>
+  </div>
+</div></section>
+
+<section id="setup"><div class="wrap">
+  <div class="eyebrow"><span class="label">Setup · self-host</span></div>
+  <h2 class="sec">Four steps to your first drop</h2>
+
+  <div class="steps">
+    <div class="step"><div class="num">1</div><div class="body">
+      <h3>Clone &amp; start the server</h3>
+      <p class="note"><code class="inl">--unmetered</code> turns off the billing gate — you're on your own machine; you shouldn't be throttled by a free-tier quota meant for the hosted service.</p>
+      <div class="term"><div class="bar">terminal</div>
+<pre><span class="c-com"># landed state goes to ~/.waste-for-agents/</span>
+git clone https://github.com/elekli/waste-for-agents.git &amp;&amp; cd waste-for-agents
+uv run python -m waste_for_agents serve --port 8848 --unmetered &amp;
+<span class="c-com"># health:</span> curl http://127.0.0.1:8848/health  <span class="c-com">→ {"status":"ok"}</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">2</div><div class="body">
+      <h3>Issue yourself a key</h3>
+      <p class="note">Writes a key straight to the local DB and prints it. (Sidesteps a chicken-and-egg: the MCP header needs a key, but the self-serve <code class="inl">issue_key</code> tool needs you already connected.)</p>
+      <div class="term"><div class="bar">terminal</div>
+<pre>KEY=$(uv run python -m waste_for_agents issue-key)
+echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">3</div><div class="body">
+      <h3>Register the MCP server <span class="badge info" style="vertical-align:middle"><span class="dot"></span>agent path</span></h3>
+      <div class="callout"><span class="ic">!</span><p><strong>Order matters.</strong> Add the server <em>before</em> you start (or restart) Claude Code. A server registered mid-session does <strong>not</strong> load its tools into the running session.</p></div>
+      <div class="term"><div class="bar">terminal</div>
+<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
+  --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+<span class="c-com"># then start a fresh Claude Code session</span></pre></div>
+    </div></div>
+
+    <div class="step"><div class="num">4</div><div class="body">
+      <h3>Subscribe &amp; drain</h3>
+      <p class="note">In your agent: create a watch, then pull changes. Give a homepage URL — discovery finds the feed (it tries <code class="inl">&lt;link&gt;</code>, then <code class="inl">/feed</code>, <code class="inl">/rss</code>…).</p>
+      <div class="term"><div class="bar">in your agent</div>
+<pre><span class="c-fn">create_watch</span>(
+  source=<span class="c-str">"rss"</span>,
+  query={<span class="c-str">"url"</span>: <span class="c-str">"https://news.ycombinator.com/news"</span>},
+  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)
+
+<span class="c-fn">list_changes</span>()   <span class="c-com"># a batch on first wake, then silence until something shifts</span></pre></div>
+    </div></div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">Wire it into a workflow</span><span class="badge silent"><span class="dot"></span>no agent required</span></div>
+  <h2 class="sec">One curl into anything</h2>
+  <p class="sec-lead">The server polls on its own while it runs. To pipe changes anywhere, poll the HTTP mirror and forward. You hold the cursor between runs; the server holds the diff.</p>
+  <div class="term"><div class="bar">crontab — every 15 min → Slack</div>
+<pre><span class="c-com"># forward new HN changes to a Slack webhook</span>
+*/15 * * * *  C=$(cat ~/.wfa_cursor 2&gt;/dev/null); \
+  R=$(curl -s <span class="c-str">"http://127.0.0.1:8848/changes?since=$C"</span> -H <span class="c-str">"Authorization: Bearer $KEY"</span>); \
+  echo $R | jq <span class="c-str">'.cursor'</span> &gt; ~/.wfa_cursor; \
+  echo $R | jq -c <span class="c-str">'.events[]'</span> | while read e; do curl -s -X POST $SLACK_WEBHOOK -d "$e"; done</pre></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm)">A <code class="inl">list_changes</code> that returns <code class="inl">{"events": [], "cursor": N}</code> is the muted horn — nothing shifted upstream. That's the normal state, not an error.</p>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">Field notes</span></div>
+  <h2 class="sec">Things that trip people up</h2>
+  <table class="ledger">
+    <thead><tr><th style="width:26%">Symptom</th><th style="width:40%">What's happening</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><code class="inl">403 Forbidden</code> on a homepage</td><td>The site blocks requests without a browser User-Agent.</td><td class="fix">Add one: <code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
+      <tr><td>"no feed found" on a 200 OK</td><td>No discoverable <code class="inl">&lt;link rel=alternate&gt;</code>, and common paths didn't resolve.</td><td class="fix">Give the feed URL directly (often <code class="inl">/feed</code> or <code class="inl">/rss</code>).</td></tr>
+      <tr><td>Agent can't see the tools</td><td>The MCP server was added after the session started.</td><td class="fix">Restart Claude Code after <code class="inl">claude mcp add</code>.</td></tr>
+      <tr><td>Second poll repeats items</td><td><code class="inl">list_changes</code> doesn't track your cursor for you.</td><td class="fix">Pass the returned <code class="inl">cursor</code> back as <code class="inl">since_cursor</code>.</td></tr>
+      <tr><td>Want more items than you get</td><td>No count knob — item count is whatever the feed publishes (HN ≈ 30, many blogs ≈ 10–15).</td><td class="fix">Use the source's own paginated feed URL, if it has one.</td></tr>
+    </tbody>
+  </table>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow"><span class="label">Tear down</span></div>
+  <h2 class="sec">Leave no trace</h2>
+  <div class="term" style="max-width:560px"><div class="bar">terminal</div>
+<pre>uv run python -m waste_for_agents teardown   <span class="c-com"># removes ~/.waste-for-agents/</span></pre></div>
+</div></section>
+
+<footer><div class="wrap">
+  <div class="lock">
+    <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+    <div>
+      <p class="acr">W·A·S·T·E</p>
+      <p class="exp">We Await Silent Tristero's Empire</p>
+    </div>
+  </div>
+  <p class="silent">The horn is muted on purpose. A no-op is the system working: absolute silence, until reality shifts and the horn sounds once.</p>
+  <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
+</div></footer>
+
+</body>
+</html>
