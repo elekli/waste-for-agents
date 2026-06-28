@@ -96,10 +96,14 @@ class Service:
 
     auth scope:帶 caller_key_id 的方法只作用於該呼叫者歸戶的 watch
     (caller_key_id=None = 匿名/本地,只見無歸戶 watch),堵 identity↔watch 洩漏。
+
+    unmetered:self-host(模型 L)用——關掉計費 gate,list_changes 全交付、不 stub。
+    計費 gate 是 SaaS 模型的產物;跑自己機器的人不該被自己的免費額度擋住長跑 workflow。
     """
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, unmetered: bool = False) -> None:
         self.store = store
+        self.unmetered = unmetered
 
     def issue_key(self) -> dict[str, Any]:
         """自助發放一把 free-tier API key。回明文 key(只此一次)+ id;store 只存 hash。"""
@@ -158,6 +162,9 @@ class Service:
         events, cursor = self.store.events_since(since_cursor)
         owned = self._owned_watch_ids(caller_key_id)
         events = [e for e in events if e.watch_id in owned]
+        if self.unmetered:
+            # self-host:跳過計費 gate,全交付(游標照常推進)。
+            return {"events": [_event_dict(e) for e in events], "cursor": cursor}
         by_watch: dict[str, list[ChangeEvent]] = {}
         for e in events:
             by_watch.setdefault(e.watch_id, []).append(e)
@@ -213,18 +220,20 @@ class Service:
         return {"deleted": self.store.delete_watch(watch_id)}
 
 
-def build_app(store: Store, tick_s: float = 5.0) -> Any:
+def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any:
     """組 FastAPI app:綁 Service 的 MCP tool + lifespan 啟動排程器。
 
     auth:MCP tool 從 Bearer header(Context 的底層 HTTP request)取 key、驗證 + rate
     limit;失敗回 {error}。issue_key 不需 auth(自助發放)。/changes 鏡像 header 選填
     (有則 scope 到該 key、無則只見無歸戶 watch)。
+
+    unmetered:self-host 關閉計費 gate(見 Service)。
     """
     from mcp.server.fastmcp import FastMCP
 
     from .auth import AuthError, RateLimiter, authenticate, bearer_key
 
-    service = Service(store)
+    service = Service(store, unmetered=unmetered)
     rate_limiter = RateLimiter()
 
     def _caller_from_ctx(ctx: _Ctx) -> str:
@@ -360,11 +369,13 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8848,
     tick_s: float = 5.0,
+    unmetered: bool = False,
 ) -> None:
     """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。
 
     db_path=None(預設)→ 落地物進單一 data dir(`paths.db_path()`,見 paths.py);
     顯式給路徑則用之(測試 / 自訂位置)。
+    unmetered=True → 關閉計費 gate(self-host / workflow 用)。
     """
     import uvicorn
 
@@ -376,5 +387,5 @@ def serve(
         db_path = str(default_db_path())
     register_default_sources()
     store = Store.open(db_path)
-    app = build_app(store, tick_s)
+    app = build_app(store, tick_s, unmetered=unmetered)
     uvicorn.run(app, host=host, port=port)

@@ -1,5 +1,6 @@
 """Feed discovery:url 是 feed 直接用,否則從 HTML 找 <link rel=alternate>。"""
 
+import httpx
 import pytest
 
 import waste_for_agents.discovery as disco
@@ -63,3 +64,51 @@ def test_create_watch_rss_discovers_and_defaults_rolling(tmp_path, monkeypatch):
     w = svc.store.get_watch(out["watch_id"])
     assert w.query["url"] == "https://blog.com/rss"  # 已 discover
     assert w.source_kind == "rolling_window"  # 來自 source 的 default(agent 不需傳)
+
+
+# --- A:常見路徑 fallback / C:可行動錯誤訊息 ---
+
+
+def test_discover_feed_fallback_common_path(monkeypatch):
+    # 首頁無 <link>,但 /feed 解析得出 feed → 探測命中、回 /feed
+    def fake_get(url, headers):
+        if url.endswith("/feed"):
+            return RSS
+        return b"<html><body>no link here</body></html>"
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    assert discover_feed("https://blog.com/") == "https://blog.com/feed"
+
+
+def test_discover_feed_403_hints_user_agent(monkeypatch):
+    # HTTP 403 且未帶 UA → 錯誤訊息提示加 User-Agent(與「找不到 feed」分層)
+    def fake_get(url, headers):
+        req = httpx.Request("GET", url)
+        resp = httpx.Response(403, request=req)
+        raise httpx.HTTPStatusError("forbidden", request=req, response=resp)
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/")
+    assert "User-Agent" in str(ei.value)
+
+
+def test_discover_feed_403_with_ua_no_hint(monkeypatch):
+    # 已帶 UA 仍 403 → 不再提示加 UA(避免誤導:問題不在 UA)
+    def fake_get(url, headers):
+        req = httpx.Request("GET", url)
+        resp = httpx.Response(403, request=req)
+        raise httpx.HTTPStatusError("forbidden", request=req, response=resp)
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/", {"User-Agent": "x"})
+    assert "User-Agent" not in str(ei.value)
+
+
+def test_discover_feed_no_feed_suggests_direct_url(monkeypatch):
+    # 首頁、<link>、常見路徑皆無 → 訊息建議直接給 feed URL
+    monkeypatch.setattr(disco, "_get", lambda url, headers: b"<html>no feed</html>")
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/")
+    assert "/feed" in str(ei.value)

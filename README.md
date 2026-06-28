@@ -69,17 +69,24 @@ X-Tristero-Status: Silent
 
 ```bash
 # 1. 起常駐服務(落地物進單一 data dir ~/.waste-for-agents/;TwinkleSource 才需 token)
-uv run python -m waste_for_agents serve --port 8848
+#    self-host / 編進 workflow:加 --unmetered 關掉計費 gate(否則 free tier 第 3 輪起 stub)
+uv run python -m waste_for_agents serve --port 8848 --unmetered
 #    health:  curl http://127.0.0.1:8848/health        → {"status":"ok",...}
 #    mcp 端點: curl http://127.0.0.1:8848/mcp/           → 406(FastMCP 健康訊號)
 
-# 2. 領一把 free key(issue_key 免認證);之後所有呼叫帶 Authorization: Bearer <key>
-#    可先不帶 key 連上、呼叫 issue_key 拿 key,再重設帶 header 的連線。
+# 2. 領一把 key——self-host 直接用 CLI 寫本機 DB,免繞 MCP(解雞生蛋:設 header 需 key、拿 key 又得先連上)
+KEY=$(uv run python -m waste_for_agents issue-key)
+#    (SaaS 模型下改由 agent 呼叫免認證的 issue_key tool 自助發)
 
 # 3. 把它加進 agent(Claude Code)——header 設一次,所有呼叫自動帶上
+#    注意:MCP server 必須「先 add 再開 Claude Code session」,session 中途 add 不會載入其 tool
 claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
-  --header "Authorization: Bearer wfa_<your-key>"
+  --header "Authorization: Bearer $KEY"
 ```
+
+> **訂閱首頁就好:** `source="rss"` 給網站首頁,server 會先讀 `<link rel=alternate>`、再依序試
+> `/feed`、`/rss`、`/index.xml` 等常見路徑。若站台回 403,在 `query.headers` 補一個瀏覽器
+> `User-Agent`;仍找不到就直接給 feed URL(錯誤訊息會帶這些提示)。
 
 ### dogfood:監看 Hacker News
 
