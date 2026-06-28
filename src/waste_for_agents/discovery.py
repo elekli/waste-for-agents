@@ -76,8 +76,8 @@ def find_alternate_feeds(html: str, base_url: str) -> tuple[list[str], list[str]
     return content_feeds, comment_feeds
 
 
-def find_feed_link(html: str, base_url: str) -> str | None:
-    """從 HTML 找第一個**內容** RSS/Atom alternate link;無則 None(向後相容薄包裝)。"""
+def find_content_feed_link(html: str, base_url: str) -> str | None:
+    """從 HTML 找第一個**內容** RSS/Atom alternate link;無則 None(留言 feed 不算)。"""
     content_feeds, _ = find_alternate_feeds(html, base_url)
     return content_feeds[0] if content_feeds else None
 
@@ -107,29 +107,43 @@ def _forbidden_hint(exc: Exception, headers: dict[str, str]) -> str:
 
 
 def _try_get(url: str, headers: dict[str, str]) -> bytes | None:
-    """_get 的吞錯版:連線/狀態錯誤回 None(供候選探測逐一試、不中斷)。"""
+    """_get 的吞錯版:HTTP/連線錯誤回 None(供候選探測逐一試、不中斷)。
+
+    只吞 httpx.HTTPError(404、連線失敗、逾時等屬「此候選無 feed」的正常情況);
+    UnsafeUrlError(SSRF/netguard 阻擋)等非預期錯誤**照常往上拋**——安全事件要
+    可見,不可被當「找不到 feed」靜默吃掉。
+    """
     try:
         return _get(url, headers)
-    except Exception:
+    except httpx.HTTPError:
         return None
 
 
-def _probe_common_paths(base_url: str, headers: dict[str, str]) -> str | None:
-    """依序試常見 feed 路徑後綴,回第一個**有內容**的 feed 絕對 url;皆無回 None。
+def _probe_common_paths(
+    base_url: str, headers: dict[str, str]
+) -> tuple[str | None, list[str]]:
+    """依序試常見 feed 路徑後綴。
 
-    每個候選的連線/狀態錯誤視為「此路徑無 feed」吞掉、續試下一個(404 等屬正常)。
-    用 _is_content_feed:空 feed(如留言 feed)不該被當常見路徑命中而靜默接受。
+    回 (第一個**有內容**的 feed 絕對 url 或 None, 過程中見到的「是 feed 但 0 篇」清單)。
+    每個候選的 HTTP/連線錯誤視為「此路徑無 feed」吞掉、續試下一個(404 等屬正常)。
+    用 _is_content_feed:空 feed(如留言 feed)不被當命中;但會收進 empties 供失敗訊息
+    點名(不靜默)。
     """
     seen: set[str] = set()
+    empties: list[str] = []
     for path in _COMMON_FEED_PATHS:
         candidate = urljoin(base_url, path)
         if candidate in seen:
             continue
         seen.add(candidate)
         content = _try_get(candidate, headers)
-        if content is not None and _is_content_feed(content):
-            return candidate
-    return None
+        if content is None:
+            continue
+        if _is_content_feed(content):
+            return candidate, empties
+        if is_feed(content):
+            empties.append(candidate)
+    return None, empties
 
 
 def _no_feed_message(
@@ -181,7 +195,7 @@ def discover_feed(url: str, headers: dict[str, str] | None = None) -> str:
         if is_feed(cand_content):
             # 是 feed 但 0 篇(如沒帶 comment title 的留言 feed)→ 記下,不靜默回傳。
             empty.append(cand)
-    probed = _probe_common_paths(url, hdrs)
+    probed, probed_empty = _probe_common_paths(url, hdrs)
     if probed:
         return probed
-    raise FeedDiscoveryError(_no_feed_message(url, empty, comment_feeds))
+    raise FeedDiscoveryError(_no_feed_message(url, empty + probed_empty, comment_feeds))

@@ -8,7 +8,7 @@ from waste_for_agents.discovery import (
     FeedDiscoveryError,
     discover_feed,
     find_alternate_feeds,
-    find_feed_link,
+    find_content_feed_link,
     is_feed,
 )
 
@@ -19,18 +19,18 @@ COMMENTS_RSS = b'<?xml version="1.0"?><rss version="2.0"><channel>\
 <title>Comments on: Home</title></channel></rss>'
 
 
-def test_find_feed_link_rss_relative():
+def test_find_content_feed_link_rss_relative():
     html = '<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>'
-    assert find_feed_link(html, "https://blog.com/posts") == "https://blog.com/feed.xml"
+    assert find_content_feed_link(html, "https://blog.com/posts") == "https://blog.com/feed.xml"
 
 
-def test_find_feed_link_atom_absolute():
+def test_find_content_feed_link_atom_absolute():
     html = '<link rel="alternate" type="application/atom+xml" href="https://a.com/atom">'
-    assert find_feed_link(html, "https://blog.com/") == "https://a.com/atom"
+    assert find_content_feed_link(html, "https://blog.com/") == "https://a.com/atom"
 
 
-def test_find_feed_link_none():
-    assert find_feed_link("<html><body>no feed here</body></html>", "https://x.com") is None
+def test_find_content_feed_link_none():
+    assert find_content_feed_link("<html><body>no feed here</body></html>", "https://x.com") is None
 
 
 def test_is_feed():
@@ -197,6 +197,31 @@ def test_discover_feed_empty_untitled_feed_not_returned(monkeypatch):
             return html
         if url == "https://blog.com/feed":
             return COMMENTS_RSS  # valid feed 但 0 篇
+        raise httpx.ConnectError("nope")
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/")
+    assert "https://blog.com/feed" in str(ei.value)
+
+
+def test_discover_feed_direct_empty_feed_trusted(monkeypatch):
+    # url 本身就是 feed(即使 0 篇)→ 信任明示輸入、原樣回。
+    # 刻意不驗 entries:無法區分「剛開站的空 feed」與「空留言 feed」,使用者已明示。
+    monkeypatch.setattr(disco, "_get", lambda url, headers: COMMENTS_RSS)
+    assert (
+        discover_feed("https://blog.com/comments/feed")
+        == "https://blog.com/comments/feed"
+    )
+
+
+def test_discover_feed_common_path_empty_feed_named(monkeypatch):
+    # 首頁無 alternate,但常見路徑 /feed 是 0 篇空 feed → 具名失敗時點名該空 feed。
+    def fake_get(url, headers):
+        if url == "https://blog.com/":
+            return b"<html><body>no link</body></html>"
+        if url == "https://blog.com/feed":
+            return COMMENTS_RSS  # valid 但 0 篇
         raise httpx.ConnectError("nope")
 
     monkeypatch.setattr(disco, "_get", fake_get)
