@@ -216,3 +216,34 @@ def test_changes_http_mirror_shares_gate(tmp_path):
         ).json()
     gated = [e for e in res["events"] if e.get("gated")]
     assert len(gated) == 1 and gated[0]["row_key"] == '["a3"]'
+
+
+
+def test_unmetered_service_delivers_past_free_rounds(tmp_path):
+    # D:unmetered=True → 跳過計費 gate,第 3 輪(metered 模式本應被 gate)仍全交付、無 stub
+    s = Store.open(tmp_path / "u.db")
+    kid, w = _free_key_watch(s)  # free_rounds=2
+    _added_round(s, w, 1, ["a"])
+    _added_round(s, w, 2, ["b"])
+    _added_round(s, w, 3, ["c"])
+
+    svc = Service(s, unmetered=True)
+    out = svc.list_changes(None, caller_key_id=kid)
+    mine = [e for e in out["events"] if e["watch_id"] == w.id]
+    assert len(mine) == 3
+    assert all("gated" not in e for e in mine)  # 一個都不該被 stub
+
+
+def test_metered_service_gates_third_round(tmp_path):
+    # 對照:同情境但 unmetered=False(預設)→ 第 3 輪被 gate 成 stub(回歸保護)
+    s = Store.open(tmp_path / "m2.db")
+    kid, w = _free_key_watch(s)
+    _added_round(s, w, 1, ["a"])
+    _added_round(s, w, 2, ["b"])
+    _added_round(s, w, 3, ["c"])
+
+    svc = Service(s)  # 預設 metered
+    out = svc.list_changes(None, caller_key_id=kid)
+    mine = [e for e in out["events"] if e["watch_id"] == w.id]
+    gated = [e for e in mine if e.get("gated")]
+    assert len(gated) == 1 and gated[0]["row_key"] == '["c"]'
