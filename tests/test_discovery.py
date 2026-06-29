@@ -7,26 +7,30 @@ import waste_for_agents.discovery as disco
 from waste_for_agents.discovery import (
     FeedDiscoveryError,
     discover_feed,
-    find_feed_link,
+    find_alternate_feeds,
+    find_content_feed_link,
     is_feed,
 )
 
 RSS = b'<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>\
 <item><title>a</title></item></channel></rss>'
+# valid rss20,但 0 篇 <item> — WordPress 首頁留言 feed 的典型形狀(空內容)。
+COMMENTS_RSS = b'<?xml version="1.0"?><rss version="2.0"><channel>\
+<title>Comments on: Home</title></channel></rss>'
 
 
-def test_find_feed_link_rss_relative():
+def test_find_content_feed_link_rss_relative():
     html = '<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>'
-    assert find_feed_link(html, "https://blog.com/posts") == "https://blog.com/feed.xml"
+    assert find_content_feed_link(html, "https://blog.com/posts") == "https://blog.com/feed.xml"
 
 
-def test_find_feed_link_atom_absolute():
+def test_find_content_feed_link_atom_absolute():
     html = '<link rel="alternate" type="application/atom+xml" href="https://a.com/atom">'
-    assert find_feed_link(html, "https://blog.com/") == "https://a.com/atom"
+    assert find_content_feed_link(html, "https://blog.com/") == "https://a.com/atom"
 
 
-def test_find_feed_link_none():
-    assert find_feed_link("<html><body>no feed here</body></html>", "https://x.com") is None
+def test_find_content_feed_link_none():
+    assert find_content_feed_link("<html><body>no feed here</body></html>", "https://x.com") is None
 
 
 def test_is_feed():
@@ -40,8 +44,13 @@ def test_discover_feed_direct_feed(monkeypatch):
 
 
 def test_discover_feed_from_homepage(monkeypatch):
+    # discover 現在會抓回候選驗「有內容」→ /rss 須回真 feed,其餘回首頁 html。
     html = b'<html><head><link rel="alternate" type="application/rss+xml" href="/rss"></head></html>'
-    monkeypatch.setattr(disco, "_get", lambda url, headers: html)
+
+    def fake_get(url, headers):
+        return RSS if url == "https://blog.com/rss" else html
+
+    monkeypatch.setattr(disco, "_get", fake_get)
     assert discover_feed("https://blog.com/") == "https://blog.com/rss"
 
 
@@ -58,7 +67,11 @@ def test_create_watch_rss_discovers_and_defaults_rolling(tmp_path, monkeypatch):
 
     register_default_sources()
     html = b'<html><head><link rel="alternate" type="application/rss+xml" href="/rss"></head></html>'
-    monkeypatch.setattr(disco, "_get", lambda url, headers: html)
+
+    def fake_get(url, headers):
+        return RSS if url == "https://blog.com/rss" else html
+
+    monkeypatch.setattr(disco, "_get", fake_get)
     svc = Service(Store.open(tmp_path / "w.db"))
     out = svc.create_watch("rss", {"url": "https://blog.com/"}, ["id"], [], 3600)
     w = svc.store.get_watch(out["watch_id"])
@@ -112,3 +125,106 @@ def test_discover_feed_no_feed_suggests_direct_url(monkeypatch):
     with pytest.raises(FeedDiscoveryError) as ei:
         discover_feed("https://blog.com/")
     assert "/feed" in str(ei.value)
+
+
+# --- Fix(1):留言/空 feed 不再靜默訂閱 ---
+
+
+def test_find_alternate_feeds_splits_comments():
+    # title 含 comment → 歸留言類;其餘歸內容類;順序保留。
+    html = (
+        '<link rel="alternate" type="application/rss+xml" title="Home Comments Feed" href="/comments/feed">'
+        '<link rel="alternate" type="application/rss+xml" title="Feed" href="/feed">'
+    )
+    content, comments = find_alternate_feeds(html, "https://blog.com/")
+    assert content == ["https://blog.com/feed"]
+    assert comments == ["https://blog.com/comments/feed"]
+
+
+def test_discover_feed_prefers_content_over_comments(monkeypatch):
+    # 首頁同時宣告留言 feed(在前、0 篇)與內容 feed → 回內容 feed,不被留言 feed 騙。
+    html = (
+        b'<html><head>'
+        b'<link rel="alternate" type="application/rss+xml" title="Comments Feed" href="/comments/feed">'
+        b'<link rel="alternate" type="application/rss+xml" title="Feed" href="/feed">'
+        b'</head></html>'
+    )
+
+    def fake_get(url, headers):
+        if url == "https://blog.com/feed":
+            return RSS
+        if url == "https://blog.com/comments/feed":
+            return COMMENTS_RSS
+        return html
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    assert discover_feed("https://blog.com/") == "https://blog.com/feed"
+
+
+def test_discover_feed_comments_only_raises(monkeypatch):
+    # 只宣告留言 feed(0 篇)、常見路徑皆無 → 具名失敗、訊息點名該留言 feed(CWT 情境)。
+    html = (
+        b'<html><head>'
+        b'<link rel="alternate" type="application/rss+xml" title="Home Comments Feed" href="/home/feed/">'
+        b'</head></html>'
+    )
+
+    def fake_get(url, headers):
+        # 首頁回 html;留言 feed 抓得到(但 0 篇);常見路徑全連不上。
+        if url == "https://blog.com/":
+            return html
+        if url == "https://blog.com/home/feed/":
+            return COMMENTS_RSS
+        raise httpx.ConnectError("no feed here")
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/")
+    # 留言 feed 不被當內容回傳,且在訊息中被點名(不靜默)
+    assert "/home/feed/" in str(ei.value)
+
+
+def test_discover_feed_empty_untitled_feed_not_returned(monkeypatch):
+    # 沒帶 comment title 的 alternate,但抓回來是 0 篇 → 不回傳,記為空、具名失敗點名。
+    html = (
+        b'<html><head>'
+        b'<link rel="alternate" type="application/rss+xml" href="/feed">'
+        b'</head></html>'
+    )
+
+    def fake_get(url, headers):
+        if url == "https://blog.com/":
+            return html
+        if url == "https://blog.com/feed":
+            return COMMENTS_RSS  # valid feed 但 0 篇
+        raise httpx.ConnectError("nope")
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/")
+    assert "https://blog.com/feed" in str(ei.value)
+
+
+def test_discover_feed_direct_empty_feed_trusted(monkeypatch):
+    # url 本身就是 feed(即使 0 篇)→ 信任明示輸入、原樣回。
+    # 刻意不驗 entries:無法區分「剛開站的空 feed」與「空留言 feed」,使用者已明示。
+    monkeypatch.setattr(disco, "_get", lambda url, headers: COMMENTS_RSS)
+    assert (
+        discover_feed("https://blog.com/comments/feed")
+        == "https://blog.com/comments/feed"
+    )
+
+
+def test_discover_feed_common_path_empty_feed_named(monkeypatch):
+    # 首頁無 alternate,但常見路徑 /feed 是 0 篇空 feed → 具名失敗時點名該空 feed。
+    def fake_get(url, headers):
+        if url == "https://blog.com/":
+            return b"<html><body>no link</body></html>"
+        if url == "https://blog.com/feed":
+            return COMMENTS_RSS  # valid 但 0 篇
+        raise httpx.ConnectError("nope")
+
+    monkeypatch.setattr(disco, "_get", fake_get)
+    with pytest.raises(FeedDiscoveryError) as ei:
+        discover_feed("https://blog.com/")
+    assert "https://blog.com/feed" in str(ei.value)
