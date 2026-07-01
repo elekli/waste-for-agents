@@ -106,6 +106,7 @@ code.inl{background:var(--surface-sunken);border:1px solid var(--ink-300);border
 
 .hero{padding:var(--space-12) 0 var(--space-10)}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:var(--space-8);align-items:center}
+.hero-grid>*{min-width:0}/* grid items default to min-width:auto; the code-block's min-content would force the track (and page) wider than a phone. min-width:0 lets .term pre's overflow-x:auto contain it. */
 .hero h1{font-size:var(--text-4xl);margin-bottom:var(--space-4)}
 .hero .sub{font-size:var(--text-lg);color:var(--text-body);max-width:46ch;margin-bottom:var(--space-6)}
 .hero .cta{display:flex;gap:var(--space-4);flex-wrap:wrap;align-items:center}
@@ -119,7 +120,8 @@ code.inl{background:var(--surface-sunken);border:1px solid var(--ink-300);border
 .step h3{font-size:var(--text-xl);margin-bottom:.25em}
 .step .note{color:var(--text-muted);font-size:var(--text-sm);margin-bottom:.4em}
 
-.ledger{width:100%;border-collapse:separate;border-spacing:0;border:var(--border-line) solid var(--ink-900);border-radius:var(--radius-md);overflow:hidden;background:var(--paper-50);margin-top:var(--space-5)}
+.ledger-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}/* keep the wide field-notes table scrolling inside its own box — no page-level horizontal scroll on mobile */
+.ledger{width:100%;min-width:520px;border-collapse:separate;border-spacing:0;border:var(--border-line) solid var(--ink-900);border-radius:var(--radius-md);overflow:hidden;background:var(--paper-50);margin-top:var(--space-5)}
 .ledger th,.ledger td{text-align:left;padding:13px 16px;vertical-align:top;font-size:var(--text-sm)}
 .ledger thead th{background:var(--ink-900);color:var(--paper-50);font:700 var(--text-2xs) var(--font-mono);text-transform:uppercase;letter-spacing:var(--tracking-label)}
 .ledger tbody tr+tr td{border-top:var(--border-line) dashed var(--ink-300)}
