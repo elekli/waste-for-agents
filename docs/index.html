@@ -37,7 +37,7 @@
     <span class="stamp" aria-hidden="true"><span class="inner">
       <svg class="horn" viewBox="0 0 80 80" fill="none"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
     </span></span>
-    <div class="term" style="width:100%">
+    <div class="term no-copy" style="width:100%">
       <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · the drop</div>
 <pre><span class="c-com"># your agent wakes, asks once</span>
 <span class="c-fn">list_changes</span>()
@@ -129,34 +129,72 @@
 <section id="setup"><div class="wrap">
   <div class="eyebrow"><span class="label">Prefer to run it yourself?</span><span class="badge silent"><span class="dot"></span>self-host</span></div>
   <h2 class="sec">Four steps to your first drop</h2>
-  <p class="sec-lead">It's open source and runs on your own machine. Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a>, and <a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a> (only for the agent path; the HTTP path needs just <code class="inl">curl</code>).</p>
+  <p class="sec-lead">It's open source and runs on your own machine. Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a>, and an MCP-capable agent — Claude Code, OpenCode, or Cursor (only for the agent path; the HTTP path needs just <code class="inl">curl</code>).</p>
 
   <div class="steps">
     <div class="step"><div class="num">1</div><div class="body">
       <h3>Clone &amp; start the server</h3>
       <p class="note"><code class="inl">--unmetered</code> turns off the billing gate — you're on your own machine; you shouldn't be throttled by a free-tier quota meant for the hosted service.</p>
       <div class="term"><div class="bar">terminal</div>
-<pre><span class="c-com"># landed state goes to ~/.waste-for-agents/</span>
+<pre><span class="c-com"># no uv yet?  curl -LsSf https://astral.sh/uv/install.sh | sh  — then reopen your shell</span>
+<span class="c-com"># landed state goes to ~/.waste-for-agents/</span>
 git clone https://github.com/elekli/waste-for-agents.git &amp;&amp; cd waste-for-agents
 uv run python -m waste_for_agents serve --port 8848 --unmetered &amp;
-<span class="c-com"># health:</span> curl http://127.0.0.1:8848/health  <span class="c-com">→ {"status":"ok"}</span></pre></div>
+curl http://127.0.0.1:8848/health   <span class="c-com"># → {"status":"ok","watches":0}</span></pre></div>
     </div></div>
 
     <div class="step"><div class="num">2</div><div class="body">
       <h3>Issue yourself a key</h3>
-      <p class="note">Writes a key straight to the local DB and prints it. (Sidesteps a chicken-and-egg: the MCP header needs a key, but the self-serve <code class="inl">issue_key</code> tool needs you already connected.)</p>
+      <p class="note">Writes a key straight to the local DB and prints it. (Your agent <em>could</em> issue one itself — <code class="inl">issue_key</code> is the one tool that works keyless — but you'd still have to paste the key into your client config and reconnect. Issuing from the CLI first saves that round-trip.)</p>
       <div class="term"><div class="bar">terminal</div>
 <pre>KEY=$(uv run python -m waste_for_agents issue-key)
-echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
+echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
     </div></div>
 
     <div class="step"><div class="num">3</div><div class="body">
       <h3>Register the MCP server <span class="badge info" style="vertical-align:middle"><span class="dot"></span>agent path</span></h3>
-      <div class="callout"><span class="ic">!</span><p><strong>Order matters.</strong> Add the server <em>before</em> you start (or restart) Claude Code. A server registered mid-session does <strong>not</strong> load its tools into the running session.</p></div>
-      <div class="term"><div class="bar">terminal</div>
-<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
-  --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+      <div class="callout"><span class="ic">!</span><p><strong>Order matters.</strong> Register the server <em>before</em> you start (or restart) your agent session — a server added mid-session does <strong>not</strong> load its tools. And keep the <code class="inl">Authorization</code> header attached: without it, every call except <code class="inl">issue_key</code> returns <code class="inl">unauthorized</code>.</p></div>
+      <div class="tabs">
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-claude" checked>
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-opencode">
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-cursor">
+        <div class="tabbar">
+          <label for="tab-claude">Claude Code</label>
+          <label for="tab-opencode">OpenCode</label>
+          <label for="tab-cursor">Cursor</label>
+        </div>
+        <div class="tabpane" id="pane-claude">
+          <div class="term"><div class="bar">terminal</div>
+<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ --header <span class="c-str">"Authorization: Bearer $KEY"</span>
 <span class="c-com"># then start a fresh Claude Code session</span></pre></div>
+        </div>
+        <div class="tabpane" id="pane-opencode">
+          <div class="term"><div class="bar">opencode.json — project root (or ~/.config/opencode/)</div>
+<pre>{
+  <span class="c-str">"mcp"</span>: {
+    <span class="c-str">"waste"</span>: {
+      <span class="c-str">"type"</span>: <span class="c-str">"remote"</span>,
+      <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
+      <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> },
+      <span class="c-str">"enabled"</span>: <span class="c-fn">true</span>
+    }
+  }
+}</pre></div>
+          <p class="note">JSON won't expand <code class="inl">$KEY</code> — paste the literal key from step 2 (<code class="inl">echo $KEY</code>), then restart OpenCode.</p>
+        </div>
+        <div class="tabpane" id="pane-cursor">
+          <div class="term"><div class="bar">.cursor/mcp.json — project (or ~/.cursor/mcp.json)</div>
+<pre>{
+  <span class="c-str">"mcpServers"</span>: {
+    <span class="c-str">"waste"</span>: {
+      <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
+      <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> }
+    }
+  }
+}</pre></div>
+          <p class="note">JSON won't expand <code class="inl">$KEY</code> — paste the literal key from step 2, then reload the server in Cursor Settings → MCP (or restart Cursor).</p>
+        </div>
+      </div>
     </div></div>
 
     <div class="step"><div class="num">4</div><div class="body">
@@ -194,7 +232,8 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
     <tbody>
       <tr><td><code class="inl">403 Forbidden</code> on a homepage</td><td>The site blocks requests without a browser User-Agent.</td><td class="fix">Add one: <code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
       <tr><td>"no feed found" on a 200 OK</td><td>No discoverable <code class="inl">&lt;link rel=alternate&gt;</code>, and common paths didn't resolve.</td><td class="fix">Give the feed URL directly (often <code class="inl">/feed</code> or <code class="inl">/rss</code>).</td></tr>
-      <tr><td>Agent can't see the tools</td><td>The MCP server was added after the session started.</td><td class="fix">Restart Claude Code after <code class="inl">claude mcp add</code>.</td></tr>
+      <tr><td>Agent can't see the tools</td><td>The MCP server was added after the session started.</td><td class="fix">Restart your agent session after registering the server.</td></tr>
+      <tr><td><code class="inl">unauthorized</code> on every call</td><td>The connection carries no <code class="inl">Authorization</code> header — a multi-line paste often drops the <code class="inl">--header</code> line.</td><td class="fix">Re-register with the header attached (use the copy button; it's one line).</td></tr>
       <tr><td>Second poll repeats items</td><td><code class="inl">list_changes</code> doesn't track your cursor for you.</td><td class="fix">Pass the returned <code class="inl">cursor</code> back as <code class="inl">since_cursor</code>.</td></tr>
       <tr><td>Want more items than you get</td><td>No count knob — item count is whatever the feed publishes (HN ≈ 30, many blogs ≈ 10–15).</td><td class="fix">Use the source's own paginated feed URL, if it has one.</td></tr>
     </tbody>
@@ -219,6 +258,10 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
   <p class="silent">The horn is muted on purpose. A no-op is the system working: absolute silence, until reality shifts and the horn sounds once.</p>
   <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
 </div></footer>
+
+<!-- Copy buttons on code blocks. Progressive enhancement: no JS → no button,
+     the block stays a plain <pre>. Shared across all language pages. -->
+<script src="assets/copy.js" defer></script>
 
 <!-- Tally embed loader (renders the #request form). Standard snippet. -->
 <script>
