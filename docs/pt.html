@@ -37,7 +37,7 @@
     <span class="stamp" aria-hidden="true"><span class="inner">
       <svg class="horn" viewBox="0 0 80 80" fill="none"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
     </span></span>
-    <div class="term" style="width:100%">
+    <div class="term no-copy" style="width:100%">
       <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · a entrega</div>
 <pre><span class="c-com"># seu agente acorda e pergunta uma vez</span>
 <span class="c-fn">list_changes</span>()
@@ -64,7 +64,7 @@
   </div>
   <div class="callout teal" style="margin-top:var(--space-6)">
     <span class="ic">i</span>
-    <p><strong>Pré-requisitos.</strong> Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a> e <a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a> (apenas para o caminho do agente; o caminho HTTP precisa só de <code class="inl">curl</code>).</p>
+    <p><strong>Pré-requisitos.</strong> Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a> e um agente com suporte a MCP — Claude Code, OpenCode ou Cursor (apenas para o caminho do agente; o caminho HTTP precisa só de <code class="inl">curl</code>).</p>
   </div>
 </div></section>
 
@@ -77,27 +77,65 @@
       <h3>Clone e inicie o servidor</h3>
       <p class="note"><code class="inl">--unmetered</code> desliga o portão de cobrança — você está na sua própria máquina; não deveria ser limitado por uma cota gratuita pensada para o serviço hospedado.</p>
       <div class="term"><div class="bar">terminal</div>
-<pre><span class="c-com"># o estado fica em ~/.waste-for-agents/</span>
+<pre><span class="c-com"># ainda sem uv?  curl -LsSf https://astral.sh/uv/install.sh | sh  — depois reabra o shell</span>
+<span class="c-com"># o estado fica em ~/.waste-for-agents/</span>
 git clone https://github.com/elekli/waste-for-agents.git &amp;&amp; cd waste-for-agents
 uv run python -m waste_for_agents serve --port 8848 --unmetered &amp;
-<span class="c-com"># saúde:</span> curl http://127.0.0.1:8848/health  <span class="c-com">→ {"status":"ok"}</span></pre></div>
+curl http://127.0.0.1:8848/health   <span class="c-com"># → {"status":"ok","watches":0}</span></pre></div>
     </div></div>
 
     <div class="step"><div class="num">2</div><div class="body">
       <h3>Emita uma chave para você</h3>
-      <p class="note">Grava uma chave direto no banco local e a imprime. (Resolve um problema do ovo e da galinha: o cabeçalho MCP precisa de uma chave, mas a ferramenta <code class="inl">issue_key</code> exige que você já esteja conectado.)</p>
+      <p class="note">Grava uma chave direto no banco local e a imprime. (Seu agente <em>poderia</em> emitir uma sozinho — <code class="inl">issue_key</code> é a única ferramenta que funciona sem chave — mas você ainda teria que colar a chave na configuração do cliente e reconectar. Emitir pela CLI primeiro poupa essa ida e volta.)</p>
       <div class="term"><div class="bar">terminal</div>
 <pre>KEY=$(uv run python -m waste_for_agents issue-key)
-echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
+echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
     </div></div>
 
     <div class="step"><div class="num">3</div><div class="body">
       <h3>Registre o servidor MCP <span class="badge info" style="vertical-align:middle"><span class="dot"></span>caminho do agente</span></h3>
-      <div class="callout"><span class="ic">!</span><p><strong>A ordem importa.</strong> Adicione o servidor <em>antes</em> de iniciar (ou reiniciar) o Claude Code. Um servidor registrado no meio da sessão <strong>não</strong> carrega suas ferramentas na sessão em andamento.</p></div>
-      <div class="term"><div class="bar">terminal</div>
-<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
-  --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+      <div class="callout"><span class="ic">!</span><p><strong>A ordem importa.</strong> Registre o servidor <em>antes</em> de iniciar (ou reiniciar) a sessão do seu agente — um servidor adicionado no meio da sessão <strong>não</strong> carrega suas ferramentas. E mantenha o cabeçalho <code class="inl">Authorization</code>: sem ele, toda chamada exceto <code class="inl">issue_key</code> retorna <code class="inl">unauthorized</code>.</p></div>
+      <div class="tabs">
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-claude" checked>
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-opencode">
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-cursor">
+        <div class="tabbar">
+          <label for="tab-claude">Claude Code</label>
+          <label for="tab-opencode">OpenCode</label>
+          <label for="tab-cursor">Cursor</label>
+        </div>
+        <div class="tabpane" id="pane-claude">
+          <div class="term"><div class="bar">terminal</div>
+<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ --header <span class="c-str">"Authorization: Bearer $KEY"</span>
 <span class="c-com"># depois inicie uma nova sessão do Claude Code</span></pre></div>
+        </div>
+        <div class="tabpane" id="pane-opencode">
+          <div class="term"><div class="bar">opencode.json — raiz do projeto ou (~/.config/opencode/)</div>
+<pre>{
+  <span class="c-str">"mcp"</span>: {
+    <span class="c-str">"waste"</span>: {
+      <span class="c-str">"type"</span>: <span class="c-str">"remote"</span>,
+      <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
+      <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> },
+      <span class="c-str">"enabled"</span>: <span class="c-fn">true</span>
+    }
+  }
+}</pre></div>
+          <p class="note">JSON não expande <code class="inl">$KEY</code> — cole a chave literal do passo 2 (<code class="inl">echo $KEY</code>) e reinicie o OpenCode.</p>
+        </div>
+        <div class="tabpane" id="pane-cursor">
+          <div class="term"><div class="bar">.cursor/mcp.json (~/.cursor/mcp.json)</div>
+<pre>{
+  <span class="c-str">"mcpServers"</span>: {
+    <span class="c-str">"waste"</span>: {
+      <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
+      <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> }
+    }
+  }
+}</pre></div>
+          <p class="note">Cole a chave literal do passo 2 e recarregue o servidor em Cursor Settings → MCP (ou reinicie o Cursor).</p>
+        </div>
+      </div>
     </div></div>
 
     <div class="step"><div class="num">4</div><div class="body">
@@ -130,16 +168,17 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
 <section><div class="wrap">
   <div class="eyebrow"><span class="label">Notas de campo</span></div>
   <h2 class="sec">O que costuma pegar as pessoas</h2>
-  <table class="ledger">
+  <div class="ledger-scroll"><table class="ledger">
     <thead><tr><th style="width:26%">Sintoma</th><th style="width:40%">O que está acontecendo</th><th>Solução</th></tr></thead>
     <tbody>
       <tr><td><code class="inl">403 Forbidden</code> numa página inicial</td><td>O site bloqueia requisições sem um User-Agent de navegador.</td><td class="fix">Adicione um: <code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
       <tr><td>"no feed found" com 200 OK</td><td>Sem <code class="inl">&lt;link rel=alternate&gt;</code> detectável, e os caminhos comuns não resolveram.</td><td class="fix">Passe a URL do feed diretamente (em geral <code class="inl">/feed</code> ou <code class="inl">/rss</code>).</td></tr>
-      <tr><td>O agente não vê as ferramentas</td><td>O servidor MCP foi adicionado depois que a sessão começou.</td><td class="fix">Reinicie o Claude Code após <code class="inl">claude mcp add</code>.</td></tr>
+      <tr><td>O agente não vê as ferramentas</td><td>O servidor MCP foi adicionado depois que a sessão começou.</td><td class="fix">Reinicie a sessão do agente depois de registrar o servidor.</td></tr>
+      <tr><td><code class="inl">unauthorized</code> em toda chamada</td><td>A conexão não carrega o cabeçalho <code class="inl">Authorization</code> — colar um comando de várias linhas costuma perder a linha <code class="inl">--header</code>.</td><td class="fix">Registre de novo com o cabeçalho anexado (use o botão copy; é uma linha só).</td></tr>
       <tr><td>A segunda consulta repete itens</td><td><code class="inl">list_changes</code> não guarda o cursor por você.</td><td class="fix">Devolva o <code class="inl">cursor</code> retornado como <code class="inl">since_cursor</code>.</td></tr>
       <tr><td>Quer mais itens do que recebe</td><td>Sem controle de quantidade — o número de itens é o que o feed publica (HN ≈ 30, muitos blogs ≈ 10–15).</td><td class="fix">Use a URL paginada do próprio feed, se houver.</td></tr>
     </tbody>
-  </table>
+  </table></div>
 </div></section>
 
 <section><div class="wrap">
@@ -160,6 +199,9 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
   <p class="silent">A corneta está silenciada de propósito. Um no-op é o sistema funcionando: silêncio absoluto, até a realidade mudar e a corneta soar uma vez.</p>
   <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
 </div></footer>
+
+<!-- Copy buttons on code blocks. Progressive enhancement: no JS -> no button. -->
+<script src="assets/copy.js" defer></script>
 
 </body>
 </html>

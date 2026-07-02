@@ -37,7 +37,7 @@
     <span class="stamp" aria-hidden="true"><span class="inner">
       <svg class="horn" viewBox="0 0 80 80" fill="none"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
     </span></span>
-    <div class="term" style="width:100%">
+    <div class="term no-copy" style="width:100%">
       <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · 投函</div>
 <pre><span class="c-com"># エージェントが目を覚まし、一度だけ尋ねる</span>
 <span class="c-fn">list_changes</span>()
@@ -64,7 +64,7 @@
   </div>
   <div class="callout teal" style="margin-top:var(--space-6)">
     <span class="ic">i</span>
-    <p><strong>前提条件。</strong> Python 3.12+、<a href="https://docs.astral.sh/uv/">uv</a>、<a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a>(エージェント経路のみ必要;HTTP 経路は <code class="inl">curl</code> だけで足ります)。</p>
+    <p><strong>前提条件。</strong> Python 3.12+、<a href="https://docs.astral.sh/uv/">uv</a>、MCP 対応エージェント — Claude Code・OpenCode・Cursor(エージェント経路のみ必要;HTTP 経路は <code class="inl">curl</code> だけで足ります)。</p>
   </div>
 </div></section>
 
@@ -77,27 +77,65 @@
       <h3>クローンしてサーバーを起動</h3>
       <p class="note"><code class="inl">--unmetered</code> は課金ゲートを無効にします — 自分のマシンで動かしているのですから、ホスト版向けの無料枠で制限される筋合いはありません。</p>
       <div class="term"><div class="bar">ターミナル</div>
-<pre><span class="c-com"># 生成物は ~/.waste-for-agents/ に置かれる</span>
+<pre><span class="c-com"># uv がまだ?  curl -LsSf https://astral.sh/uv/install.sh | sh  — その後シェルを開き直す</span>
+<span class="c-com"># 生成物は ~/.waste-for-agents/ に置かれる</span>
 git clone https://github.com/elekli/waste-for-agents.git &amp;&amp; cd waste-for-agents
 uv run python -m waste_for_agents serve --port 8848 --unmetered &amp;
-<span class="c-com"># ヘルス:</span> curl http://127.0.0.1:8848/health  <span class="c-com">→ {"status":"ok"}</span></pre></div>
+curl http://127.0.0.1:8848/health   <span class="c-com"># → {"status":"ok","watches":0}</span></pre></div>
     </div></div>
 
     <div class="step"><div class="num">2</div><div class="body">
       <h3>自分用のキーを発行</h3>
-      <p class="note">ローカル DB に直接キーを書き込んで表示します。(鶏と卵の問題を回避:MCP ヘッダーにはキーが必要ですが、セルフサーブの <code class="inl">issue_key</code> ツールを使うには先に接続している必要があります。)</p>
+      <p class="note">ローカル DB に直接キーを書き込んで表示します。(エージェント自身でも発行できます — <code class="inl">issue_key</code> はキーなしで動く唯一のツールです — が、結局そのキーをクライアント設定に貼って再接続することになります。先に CLI で発行すれば、その往復を省けます。)</p>
       <div class="term"><div class="bar">ターミナル</div>
 <pre>KEY=$(uv run python -m waste_for_agents issue-key)
-echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
+echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
     </div></div>
 
     <div class="step"><div class="num">3</div><div class="body">
       <h3>MCP サーバーを登録 <span class="badge info" style="vertical-align:middle"><span class="dot"></span>エージェント経路</span></h3>
-      <div class="callout"><span class="ic">!</span><p><strong>順序が重要。</strong> Claude Code を起動(または再起動)する <em>前</em> にサーバーを追加してください。セッション中に登録したサーバーは、実行中のセッションにツールを読み込み <strong>ません</strong>。</p></div>
-      <div class="term"><div class="bar">ターミナル</div>
-<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
-  --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+      <div class="callout"><span class="ic">!</span><p><strong>順序が重要。</strong> エージェントのセッションを起動(または再起動)する <em>前</em> にサーバーを登録してください。セッション中に追加したサーバーのツールは読み込まれ <strong>ません</strong>。また <code class="inl">Authorization</code> ヘッダーは必ず付けたままに — ないと <code class="inl">issue_key</code> 以外のすべての呼び出しが <code class="inl">unauthorized</code> を返します。</p></div>
+      <div class="tabs">
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-claude" checked>
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-opencode">
+        <input class="tab-radio" type="radio" name="mcp-client" id="tab-cursor">
+        <div class="tabbar">
+          <label for="tab-claude">Claude Code</label>
+          <label for="tab-opencode">OpenCode</label>
+          <label for="tab-cursor">Cursor</label>
+        </div>
+        <div class="tabpane" id="pane-claude">
+          <div class="term"><div class="bar">ターミナル</div>
+<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ --header <span class="c-str">"Authorization: Bearer $KEY"</span>
 <span class="c-com"># その後、新しい Claude Code セッションを開始</span></pre></div>
+        </div>
+        <div class="tabpane" id="pane-opencode">
+          <div class="term"><div class="bar">opencode.json — プロジェクト直下または (~/.config/opencode/)</div>
+<pre>{
+  <span class="c-str">"mcp"</span>: {
+    <span class="c-str">"waste"</span>: {
+      <span class="c-str">"type"</span>: <span class="c-str">"remote"</span>,
+      <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
+      <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> },
+      <span class="c-str">"enabled"</span>: <span class="c-fn">true</span>
+    }
+  }
+}</pre></div>
+          <p class="note">JSON は <code class="inl">$KEY</code> を展開しません — ステップ 2 のキー(<code class="inl">echo $KEY</code>)をそのまま貼り付けて、OpenCode を再起動してください。</p>
+        </div>
+        <div class="tabpane" id="pane-cursor">
+          <div class="term"><div class="bar">.cursor/mcp.json (~/.cursor/mcp.json)</div>
+<pre>{
+  <span class="c-str">"mcpServers"</span>: {
+    <span class="c-str">"waste"</span>: {
+      <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
+      <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> }
+    }
+  }
+}</pre></div>
+          <p class="note">ステップ 2 のキーをそのまま貼り付けて、Cursor Settings → MCP でサーバーを再読み込み(または Cursor を再起動)してください。</p>
+        </div>
+      </div>
     </div></div>
 
     <div class="step"><div class="num">4</div><div class="body">
@@ -130,16 +168,17 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
 <section><div class="wrap">
   <div class="eyebrow"><span class="label">現場メモ</span></div>
   <h2 class="sec">つまずきやすいところ</h2>
-  <table class="ledger">
+  <div class="ledger-scroll"><table class="ledger">
     <thead><tr><th style="width:26%">症状</th><th style="width:40%">何が起きているか</th><th>対処</th></tr></thead>
     <tbody>
       <tr><td><code class="inl">403 Forbidden</code> がトップページで出る</td><td>サイトがブラウザの User-Agent なしのリクエストを拒否している。</td><td class="fix">付ける:<code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
       <tr><td>200 OK なのに「no feed found」</td><td>検出できる <code class="inl">&lt;link rel=alternate&gt;</code> がなく、よくあるパスも解決しなかった。</td><td class="fix">フィードの URL を直接渡す(多くは <code class="inl">/feed</code> か <code class="inl">/rss</code>)。</td></tr>
-      <tr><td>エージェントがツールを見つけられない</td><td>MCP サーバーをセッション開始後に追加した。</td><td class="fix"><code class="inl">claude mcp add</code> の後で Claude Code を再起動する。</td></tr>
+      <tr><td>エージェントがツールを見つけられない</td><td>MCP サーバーをセッション開始後に追加した。</td><td class="fix">サーバー登録後にエージェントのセッションを再起動する。</td></tr>
+      <tr><td>すべての呼び出しが <code class="inl">unauthorized</code></td><td>接続に <code class="inl">Authorization</code> ヘッダーが付いていない — 複数行コマンドの貼り付けでは <code class="inl">--header</code> 行が落ちがち。</td><td class="fix">ヘッダー付きで登録し直す(copy ボタンを使えば 1 行)。</td></tr>
       <tr><td>2 回目のポーリングで同じ項目が出る</td><td><code class="inl">list_changes</code> はカーソルを代わりに覚えてくれない。</td><td class="fix">返ってきた <code class="inl">cursor</code> を <code class="inl">since_cursor</code> として渡す。</td></tr>
       <tr><td>もっと多くの項目が欲しい</td><td>件数の調整つまみはない — 項目数はフィードが出す通り(HN ≈ 30、多くのブログ ≈ 10–15)。</td><td class="fix">ソース自身のページ送りフィード URL があれば、それを使う。</td></tr>
     </tbody>
-  </table>
+  </table></div>
 </div></section>
 
 <section><div class="wrap">
@@ -160,6 +199,9 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
   <p class="silent">ホルンはわざと消音されています。no-op はシステムが働いている証:完全な沈黙、そして現実が動いたとき、ホルンが一度だけ鳴る。</p>
   <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
 </div></footer>
+
+<!-- Copy buttons on code blocks. Progressive enhancement: no JS -> no button. -->
+<script src="assets/copy.js" defer></script>
 
 </body>
 </html>
