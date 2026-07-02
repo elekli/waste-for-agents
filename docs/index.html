@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>posthorn — RSS subscriptions for AI agents</title>
-<meta name="description" content="A pull-first RSS subscription layer for AI agents. Subscribe once; your agent asks one silent channel and gets back only the real changes.">
+<title>posthorn — exactly what changed, for AI agents</title>
+<meta name="description" content="A clean, deduped, normalized history of what changed upstream. Your agent asks once and gets back only the real changes since last time — nothing re-sent, nothing missed.">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="stylesheet" href="assets/tristero.css">
 </head>
@@ -13,7 +13,7 @@
 <nav class="site-nav"><div class="wrap row">
   <a class="brand" href="index.html">
     <svg class="horn" viewBox="0 0 80 80" fill="none" aria-hidden="true"><path d="M44 42 A 16 16 0 1 1 26 35" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M44 42 C47 36, 48 33, 50 30" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M52 33 L44.5 26 L60 5 C67 8, 72.5 15, 74 23 Z" fill="currentColor"/><path d="M22 60 L15 67" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M10 64 L17 71" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
-    <span class="wordmark">posthorn</span><span class="brand-tag">RSS subscription for agents</span>
+    <span class="wordmark">posthorn</span><span class="brand-tag">change feed for agents</span>
   </a>
   <div class="nav-spacer"></div>
   <nav class="langbar" aria-label="Language">
@@ -26,11 +26,11 @@
 <header class="hero"><div class="wrap hero-grid">
   <div>
     <div class="eyebrow"><span class="label">W·A·S·T·E — the muted post horn</span></div>
-    <h1>RSS subscriptions for&nbsp;AI&nbsp;agents</h1>
-    <p class="sub">Your agent's go-to dispatcher for any feed it needs to watch. Subscribe once — it keeps one silent channel open and gets back only the&nbsp;real&nbsp;changes.</p>
+    <h1>Exactly what's new. Nothing re-sent, nothing&nbsp;missed.</h1>
+    <p class="sub">A clean, deduped, normalized history of what changed upstream. Your agent asks once and gets back only the real differences since last&nbsp;time — RSS, feeds, any source you point it&nbsp;at.</p>
     <div class="cta">
-      <a class="btn btn-primary" href="#setup">Run it locally ↓</a>
-      <a class="btn btn-secondary" href="https://github.com/elekli/waste-for-agents">View source</a>
+      <a class="btn btn-primary" href="#request" data-goatcounter-click="cta-hero-request">Request access →</a>
+      <a class="btn btn-secondary" href="https://github.com/elekli/waste-for-agents" data-goatcounter-click="cta-hero-source">View source</a>
     </div>
   </div>
   <div class="hero-art">
@@ -54,23 +54,82 @@
 </div></header>
 
 <section><div class="wrap">
-  <div class="eyebrow"><span class="label">What you'll have in 5 minutes</span></div>
-  <h2 class="sec">A poller that runs while you sleep</h2>
-  <p class="sec-lead">A local server polls your feeds on a schedule and accumulates only the real changes. It hands them over two ways: as <strong>MCP tools</strong> for your agent (Claude Code &amp; friends), and as a plain <strong>HTTP endpoint</strong> — <code class="inl">GET /changes</code> — you can <code class="inl">curl</code> into a cron job, a Slack webhook, or another service.</p>
+  <div class="eyebrow"><span class="label">What you get</span></div>
+  <h2 class="sec">A diff, not a firehose</h2>
+  <p class="sec-lead">Point it at a source. It polls on a schedule and accumulates only the <strong>real</strong> changes. Your agent drains them with one call — <code class="inl">list_changes</code> as an <strong>MCP tool</strong>, or <code class="inl">GET /changes</code> as a plain <strong>HTTP endpoint</strong> you can <code class="inl">curl</code>. You hold a cursor; you never re-see what you already saw.</p>
   <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;margin-top:var(--space-5)">
     <span class="badge ok"><span class="dot"></span>True diff — ignores timestamp churn</span>
     <span class="badge info"><span class="dot"></span>Content as clean Markdown</span>
     <span class="badge silent"><span class="dot"></span>Silence is the no-op</span>
   </div>
-  <div class="callout teal" style="margin-top:var(--space-6)">
-    <span class="ic">i</span>
-    <p><strong>Prerequisites.</strong> Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a>, and <a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a> (only for the agent path; the HTTP path needs just <code class="inl">curl</code>).</p>
+</div></section>
+
+<!-- ===================================================================
+     REQUEST ACCESS — qualification form (demand test, Phase 0)
+     -------------------------------------------------------------------
+     This section embeds a TALLY form. Build the form in Tally, then
+     replace TALLY_FORM_ID below in the iframe data-tally-src.
+
+     Analytics: GoatCounter only (NOT Google Analytics). Set your site
+     code in the GoatCounter <script> near </body>.
+
+     Build these 7 questions IN TALLY, in THIS ORDER (order matters —
+     qualify first, then architecture, then transport preference last).
+     Use Tally's conditional logic where noted.
+
+       1. [Multiple choice · REQUIRED · hard filter]
+          "Are you building an agent / automation that tracks changes
+           in external sources?"
+             o Running in production
+             o Prototyping
+             o Just curious            <- tag as low-weight sample
+       2. [Multiple choice + "Other" text]
+          "What framework / stack?"
+             LangGraph · Homegrown · n8n · Claude · OpenAI Assistants · Other ___
+       3. [Multiple choice · determines push feasibility]
+          "Where does your agent run?"
+             Serverless (Lambda / Workers) · Local machine ·
+             Long-running VM or container · Managed platform
+       4. [Multiple choice · KEY pull-vs-push capability question]
+          "Does it have a public HTTP endpoint that can receive a webhook?"
+             Yes · No · Not sure
+       5. [Long text · baseline / pain intensity]
+          "How do you track changes in these sources today?"
+       6. [Multiple choice · preference — cross-tabulate with #3 and #4]
+          "How would you want to receive changes?"
+             My agent pulls when it wakes ·
+             Push to my agent's webhook ·
+             Push to me (Telegram / Slack / email) ·
+             Not sure
+       7. [Email field + multiple choice · soft willingness-to-pay signal]
+          "Email" + "What would you pay?"
+             $0 · <$10 · $10-30 · >$30 per month
+
+     READING (see ~/.claude/plans/posthorn-demand-test.md):
+       - #1 filters out non-production/prototype; only count qualified.
+       - #4 x #6: wants push-to-webhook but #4 = No  ->  they really
+         want push-to-channel, not push-to-agent.
+       - #3 / #4 distribution IS the pull-first read (architecture,
+         not a vote).  #5 is the pain floor.
+     =================================================================== -->
+<section id="request"><div class="wrap">
+  <div class="eyebrow"><span class="label">Request access · early</span></div>
+  <h2 class="sec">Tell us what you're building</h2>
+  <p class="sec-lead">posthorn is in early access. Tell us your setup and we'll tailor delivery to how your agent actually runs — then send you a key and help wire it in. Takes about a minute.</p>
+
+  <div class="card" style="margin-top:var(--space-6);padding:var(--space-4)">
+    <iframe
+      data-tally-src="https://tally.so/embed/TALLY_FORM_ID?alignLeft=1&hideTitle=1&transparentBackground=1&dynamicHeight=1"
+      loading="lazy" width="100%" height="720" frameborder="0" marginheight="0" marginwidth="0"
+      title="posthorn — request access"></iframe>
   </div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);margin-top:var(--space-4)">Form not loading? Email <a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a> with what you're building and where it runs.</p>
 </div></section>
 
 <section id="setup"><div class="wrap">
-  <div class="eyebrow"><span class="label">Setup · self-host</span></div>
+  <div class="eyebrow"><span class="label">Prefer to run it yourself?</span><span class="badge silent"><span class="dot"></span>self-host</span></div>
   <h2 class="sec">Four steps to your first drop</h2>
+  <p class="sec-lead">It's open source and runs on your own machine. Python 3.12+, <a href="https://docs.astral.sh/uv/">uv</a>, and <a href="https://docs.claude.com/en/docs/claude-code">Claude Code</a> (only for the agent path; the HTTP path needs just <code class="inl">curl</code>).</p>
 
   <div class="steps">
     <div class="step"><div class="num">1</div><div class="body">
@@ -130,7 +189,7 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
 <section><div class="wrap">
   <div class="eyebrow"><span class="label">Field notes</span></div>
   <h2 class="sec">Things that trip people up</h2>
-  <table class="ledger">
+  <div class="ledger-scroll"><table class="ledger">
     <thead><tr><th style="width:26%">Symptom</th><th style="width:40%">What's happening</th><th>Fix</th></tr></thead>
     <tbody>
       <tr><td><code class="inl">403 Forbidden</code> on a homepage</td><td>The site blocks requests without a browser User-Agent.</td><td class="fix">Add one: <code class="inl">headers:{"User-Agent":"Mozilla/5.0 …"}</code></td></tr>
@@ -139,7 +198,7 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
       <tr><td>Second poll repeats items</td><td><code class="inl">list_changes</code> doesn't track your cursor for you.</td><td class="fix">Pass the returned <code class="inl">cursor</code> back as <code class="inl">since_cursor</code>.</td></tr>
       <tr><td>Want more items than you get</td><td>No count knob — item count is whatever the feed publishes (HN ≈ 30, many blogs ≈ 10–15).</td><td class="fix">Use the source's own paginated feed URL, if it has one.</td></tr>
     </tbody>
-  </table>
+  </table></div>
 </div></section>
 
 <section><div class="wrap">
@@ -160,6 +219,18 @@ echo $KEY   <span class="c-com">→ wfa_…</span></pre></div>
   <p class="silent">The horn is muted on purpose. A no-op is the system working: absolute silence, until reality shifts and the horn sounds once.</p>
   <p style="margin-top:var(--space-5);font-size:var(--text-sm)"><a href="mailto:getposthorn@pm.me">getposthorn@pm.me</a></p>
 </div></footer>
+
+<!-- Tally embed loader (renders the #request form). Standard snippet. -->
+<script>
+var d=document,w="https://tally.so/widgets/embed.js",v=function(){"undefined"!=typeof Tally?Tally.loadEmbeds():d.querySelectorAll("iframe[data-tally-src]:not([src])").forEach((function(e){e.src=e.dataset.tallySrc}))};if("undefined"!=typeof Tally)v();else if(null==d.querySelector('script[src="'+w+'"]')){var s=d.createElement("script");s.src=w,s.onload=v,s.onerror=v,d.body.appendChild(s);}
+</script>
+
+<!-- Analytics: GoatCounter only (NOT Google Analytics — audience runs uBlock/no-JS;
+     GA would undercount views and inflate conversion, and its consent banner adds friction).
+     Replace GOATCOUNTER_CODE with your site code (e.g. https://posthorn.goatcounter.com/count).
+     Pageviews auto-count; data-goatcounter-click attributes above track CTA click-through. -->
+<script data-goatcounter="https://GOATCOUNTER_CODE.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 
 </body>
 </html>
