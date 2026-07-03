@@ -104,6 +104,29 @@ h2.sec{font-size:var(--text-2xl);margin-bottom:var(--space-2)}
 .term .c-com{color:var(--ink-400)} .term .c-str{color:var(--brass-300)} .term .c-fn{color:var(--teal-300)} .term .c-key{color:var(--signal-200)}
 code.inl{background:var(--surface-sunken);border:1px solid var(--ink-300);border-radius:var(--radius-xs);padding:1px 6px;font-size:.9em;color:var(--ink-800)}
 
+/* copy button — injected into .term .bar by assets/copy.js (absent without JS) */
+.term .copybtn{margin-left:auto;font:700 var(--text-2xs)/1 var(--font-mono);text-transform:uppercase;letter-spacing:var(--tracking-label);color:var(--brass-300);background:transparent;border:1.5px solid var(--brass-700);border-radius:var(--radius-xs);padding:4px 9px;cursor:pointer;transition:var(--transition-control)}
+.term .copybtn:hover{color:var(--paper-50);border-color:var(--brass-300)}
+.term .copybtn.did{color:var(--green-500);border-color:var(--green-500)}
+
+/* client tabs — pure CSS (radio hack), works without JS */
+.tabs{margin-top:var(--space-4);position:relative}
+.tab-radio{position:absolute;opacity:0;pointer-events:none}
+.tabbar{display:flex;gap:6px;flex-wrap:wrap}
+.tabbar label{font:700 12px var(--font-mono);padding:8px 14px;border:var(--border-line) solid var(--ink-900);border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;background:var(--paper-200);color:var(--ink-500);cursor:pointer}
+#tab-claude:checked~.tabbar label[for="tab-claude"],
+#tab-opencode:checked~.tabbar label[for="tab-opencode"],
+#tab-cursor:checked~.tabbar label[for="tab-cursor"]{background:var(--surface-ink);color:var(--brass-300)}
+#tab-claude:focus-visible~.tabbar label[for="tab-claude"],
+#tab-opencode:focus-visible~.tabbar label[for="tab-opencode"],
+#tab-cursor:focus-visible~.tabbar label[for="tab-cursor"]{outline:var(--border-bold) solid var(--focus-ring);outline-offset:2px}
+.tabpane{display:none}
+#tab-claude:checked~#pane-claude,
+#tab-opencode:checked~#pane-opencode,
+#tab-cursor:checked~#pane-cursor{display:block}
+.tabpane .term{margin-top:0;border-top-left-radius:0}
+.tabpane .note{margin-top:var(--space-3)}
+
 .hero{padding:var(--space-12) 0 var(--space-10)}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:var(--space-8);align-items:center}
 .hero-grid>*{min-width:0}/* grid items default to min-width:auto; the code-block's min-content would force the track (and page) wider than a phone. min-width:0 lets .term pre's overflow-x:auto contain it. */
