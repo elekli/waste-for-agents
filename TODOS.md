@@ -34,8 +34,42 @@ MVP 刻意延後的項目。寫下來才算數(ENGINEERING Prime Directive 7)。
       需:正規化或斷言 aware。
 - [ ] **change_events 無界成長。** 已加 watch_id 索引,但長壽 watch 的事件永久累積。需:保留策略
       (TTL / 上限)或已讀清理。
+- [ ] **watch 靜默失敗(可觀測性缺口,Prime Directive 1/5)。** fetch 持續失敗時 `mark_run` 只更新
+      `last_run_at`/`last_error`、故意不動 snapshot(對——不該用錯誤狀態蓋好資料),但對外沒有任何訊號:
+      agent 呼叫 `list_changes` 只是拿不到新事件,不知道 watch 已壞、window 凍在最後一次成功。需:在
+      watch status / list_changes 回傳曝 `last_error` + `consecutive_failures` + `last_success_at`,
+      讓靜默過期變可見。**實例來源:** MacBook dogfood 的 HN watch 因 laptop sleep 後進程 resolver
+      stale,自 05:57 起持續 `RssFetchError: 無法解析 host`(同機 curl 正常),window 凍結卻無感。
+- [ ] **`getaddrinfo` 阻塞 event loop(潛在並行 bug)。** `netguard.check_outbound_url`(`netguard.py:65`)
+      用同步 `socket.getaddrinfo`,未包 `asyncio.to_thread`,跑在 scheduler loop thread 上。真實網路中斷時
+      一個 watch 的 DNS 解析會卡住**整條 loop**(所有 watch)直到 resolver timeout。watch 量小無感,量大會痛。
 
 ## v2(產品方向,非 bug)
+
+### feed 「當前狀態」讀取面 + 排名(2026-07-04 討論)
+
+**價值切成兩塊,分開做:通用的先做,窄的當 opt-in。**
+
+- [ ] **「讀當前狀態」讀取面(通用,← 現在想先做的)。** 對**任何** feed 都有用:agent 想要「當前完整集」
+      而非只有 diff。`list_changes` 天生答不了「現在整體長什麼樣」(它回差異不回快照)。缺的不是儲存——
+      `get_snapshot`(`store.py:347`,回整份 `list[Row]`)內部已存在、只是沒掛成 `@mcp.tool()`。需:把它
+      包成對外 tool(如 `get_state` / `list_items`),並確認排名型 feed 走 **dataset 模式**(snapshot = 當前
+      完整集)而非 RSS 預設的 rolling_window(累積聯集、順序已丟)。
+- [ ] **position 進 ignore_columns(要做)。** 一旦 row 帶 `position`,diff 的 `_compare` 會讓每次名次
+      洗牌炸出 modified 洪水;把 `position` 列進 watch 的 ignore_columns(`diff.py:53` 的 `- ignore`)剔除。
+      語意正確:**position 是狀態不是事件**,不該進 change stream。
+- [ ] **position 當排名(窄,per-source opt-in)。** 只對「item 順序即排名」的 feed 有意義(HN/Reddit hot/
+      PH/GitHub trending);時序型 feed 的 position ≈ recency,與 `published` 冗餘。**排名不以欄位暴露,只以
+      item 文件順序暴露**(RSS/Atom 無 `<rank>`,無規範保證順序=名次)。做法:`_entry_to_row` 用 `enumerate`
+      寫入 `position`(schema-less 儲存,無 migration);當 per-watch opt-in,別當通用功能。**注意順序在
+      `_index`(`diff.py:46`)轉 dict 時已丟,position 要靠 row 內欄位自帶、不能靠 snapshot list 排列。**
+      **已驗(2026-07-04,單次):** 抓 `news.ycombinator.com/rss` 對首頁,item 順序與名次 1–12 逐項一致;
+      但這是單次觀測 + 只驗 HN,每個來源用前都該各自對、且值得排程性複驗(HN 隨時可改)。
+- [ ] **7 欄投影對每個 feed 有損(獨立於排名)。** `_entry_to_row`(`rss.py:66`)硬取 7 欄,feedparser
+      解出的其餘(`media:*`、`dc:*`、自訂 namespace 等擴充欄位)一律丟棄。RSS item 欄位本由發行者自訂
+      (RSS 2.0 幾乎全 optional、Atom 僅強制 id/title/updated),若某來源價值藏在擴充欄位會被直接扔掉。
+      要不要保留更多欄位(甚至收 feedparser 全部走 schema-less)是獨立決定。
+
 
 - [ ] **The Underground Route(webhook push adapter)。** README 信封 header 的真正實作,給能收
       webhook 的非 agent 消費者。
