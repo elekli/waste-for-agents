@@ -107,6 +107,41 @@ def test_events_since_cursor(tmp_path) -> None:
     assert cursor == e3
 
 
+def test_events_since_per_watch(tmp_path) -> None:
+    """events_since(cursor, watch_id=X):只回該 watch、per-watch 高水位、隔離不變式。"""
+    store = _store(tmp_path)
+    a = store.create_watch("twinkle", {}, ["id"], [], 60)
+    b = store.create_watch("twinkle", {}, ["id"], [], 60)
+
+    # 交錯寫入:A B A B
+    a1 = store.append_event(a.id, "added", "a1", {"row": {"id": 1}})
+    b1 = store.append_event(b.id, "added", "b1", {"row": {"id": 1}})
+    a2 = store.append_event(a.id, "added", "a2", {"row": {"id": 2}})
+    b2 = store.append_event(b.id, "added", "b2", {"row": {"id": 2}})
+
+    # 過濾到 A:只拿 A 的事件,cursor = A 的最後一筆 id(全域空間)
+    events, cursor = store.events_since(None, watch_id=a.id)
+    assert [e.id for e in events] == [a1, a2]
+    assert all(e.watch_id == a.id for e in events)
+    assert cursor == a2
+
+    # 隔離不變式:A 已拉到高水位(a2)不影響 B——B 用自己的 cursor(從 0)拿到 B 全部。
+    # (若誤用共享 cursor a2 去拉 B,會漏掉 id<a2 的 b1;那正是本功能要修的 bug。)
+    events, cursor = store.events_since(None, watch_id=b.id)
+    assert [e.id for e in events] == [b1, b2]
+    assert cursor == b2
+
+    # 空集:A 追上後回傳入的 cursor
+    events, cursor = store.events_since(a2, watch_id=a.id)
+    assert events == []
+    assert cursor == a2
+
+    # watch_id=None(digest)維持現行:回全部
+    events, cursor = store.events_since(None)
+    assert [e.id for e in events] == [a1, b1, a2, b2]
+    assert cursor == b2
+
+
 def test_delete_watch_cascades_events(tmp_path) -> None:
     """刪 watch 連帶刪 change_events,避免孤兒事件持續被 list_changes 取得。"""
     store = _store(tmp_path)
