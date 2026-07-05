@@ -50,6 +50,13 @@ INSTRUCTIONS = (
 )
 
 
+def _norm_cursor(since_cursor: int | None) -> int:
+    """cursor 正規化(single source of truth):None → 0,與 store.events_since 內部
+    after=0 對齊。所有回傳 cursor 的路徑(正常空集、auth-error、ownership-reject、
+    缺 watch_id)一律經此,避免 None vs 0 不一致而洩漏 watch 存在性。"""
+    return since_cursor if since_cursor is not None else 0
+
+
 def _event_dict(e: ChangeEvent) -> dict[str, Any]:
     return {
         "id": e.id,
@@ -294,7 +301,11 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
         try:
             caller = _caller_from_ctx(ctx)
         except AuthError:
-            return {"error": "unauthorized", "events": [], "cursor": since_cursor}
+            return {
+                "error": "unauthorized",
+                "events": [],
+                "cursor": _norm_cursor(since_cursor),
+            }
         return service.list_changes(since_cursor, caller_key_id=caller)
 
     @mcp.tool()

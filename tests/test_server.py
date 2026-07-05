@@ -42,6 +42,25 @@ def test_list_changes_cursor_and_noop(tmp_path) -> None:
     assert out2["cursor"] == e2
 
 
+def test_norm_cursor_helper() -> None:
+    """_norm_cursor:None→0(與 events_since 內部 after=0 對齊),非 None 原樣。"""
+    from waste_for_agents.server import _norm_cursor
+
+    assert _norm_cursor(None) == 0
+    assert _norm_cursor(0) == 0
+    assert _norm_cursor(7) == 7
+
+
+def test_norm_cursor_matches_normal_empty_path(tmp_path) -> None:
+    """現存路徑一致:正常空集回的 cursor == _norm_cursor(since_cursor)。"""
+    from waste_for_agents.server import _norm_cursor
+
+    svc = _svc(tmp_path)
+    out = svc.list_changes(None)
+    assert out["events"] == []
+    assert out["cursor"] == _norm_cursor(None) == 0
+
+
 def test_delete_watch(tmp_path) -> None:
     svc = _svc(tmp_path)
     wid = svc.create_watch("fake", {}, ["id"], [], 60)["watch_id"]
