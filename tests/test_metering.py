@@ -134,7 +134,7 @@ def test_list_changes_stubs_gated_delivers_others(tmp_path):
     _added_round(s, wa, 3, ["a3"])
     _added_round(s, wb, 1, ["b1"])
     svc = Service(s)
-    res = svc.list_changes(None, caller_key_id=kid)
+    res = svc.list_changes(None, caller_key_id=kid, allow_digest=True)
     # B 的事件原樣交付(不受 A 的 gate 影響)
     b_evs = [e for e in res["events"] if e["watch_id"] == wb.id]
     assert len(b_evs) == 1 and not b_evs[0].get("gated")
@@ -157,7 +157,7 @@ def test_replay_watch_rejects_unpaid_preserves_withheld(tmp_path):
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])
     svc = Service(s)
-    svc.list_changes(None, caller_key_id=kid)  # 輪 3 gated
+    svc.list_changes(None, caller_key_id=kid, allow_digest=True)  # 輪 3 gated
     rej = svc.replay_watch(wa.id, caller_key_id=kid)  # owner 但未付費
     assert rej["events"] == [] and rej.get("error")  # 拒絕
     assert s.withheld_events(wa.id)  # 旗標未清(關鍵)
@@ -169,7 +169,7 @@ def test_replay_watch_paid_then_idempotent(tmp_path):
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])
     svc = Service(s)
-    svc.list_changes(None, caller_key_id=kid)  # 輪 3 gated
+    svc.list_changes(None, caller_key_id=kid, allow_digest=True)  # 輪 3 gated
     s.set_api_key_tier(kid, "paid")  # 付費
     paid = svc.replay_watch(wa.id, caller_key_id=kid)
     assert {e["row_key"] for e in paid["events"]} == {'["a3"]'}  # 補拿真實事件
@@ -228,7 +228,7 @@ def test_unmetered_service_delivers_past_free_rounds(tmp_path):
     _added_round(s, w, 3, ["c"])
 
     svc = Service(s, unmetered=True)
-    out = svc.list_changes(None, caller_key_id=kid)
+    out = svc.list_changes(None, caller_key_id=kid, allow_digest=True)
     mine = [e for e in out["events"] if e["watch_id"] == w.id]
     assert len(mine) == 3
     assert all("gated" not in e for e in mine)  # 一個都不該被 stub
@@ -243,7 +243,7 @@ def test_metered_service_gates_third_round(tmp_path):
     _added_round(s, w, 3, ["c"])
 
     svc = Service(s)  # 預設 metered
-    out = svc.list_changes(None, caller_key_id=kid)
+    out = svc.list_changes(None, caller_key_id=kid, allow_digest=True)
     mine = [e for e in out["events"] if e["watch_id"] == w.id]
     gated = [e for e in mine if e.get("gated")]
     assert len(gated) == 1 and gated[0]["row_key"] == '["c"]'
