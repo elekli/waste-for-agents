@@ -45,8 +45,10 @@ def _source_default_kind(source: str) -> str:
 
 INSTRUCTIONS = (
     "waste-for-agents:給 AI agent 的結構化監看訂閱層(pull-first)。\n"
-    "用 create_watch 訂閱某結構化來源的一個 query;之後在每次醒來時呼叫 "
-    "list_changes(since_cursor) 拉出自上次游標以來的變化——沒有變化就秒回空(沉默的號角)。"
+    "用 create_watch 訂閱某結構化來源的一個 query,拿到 watch_id;之後在每次醒來時對"
+    "每個 watch 呼叫 list_changes(watch_id, since_cursor) 拉出該 watch 自上次游標以來的"
+    "變化——每個 watch 是獨立的流、各自 cursor,別把多個混成一條。沒有變化就秒回空"
+    "(沉默的號角)。"
 )
 
 
