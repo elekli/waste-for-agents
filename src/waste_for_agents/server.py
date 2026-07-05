@@ -45,9 +45,18 @@ def _source_default_kind(source: str) -> str:
 
 INSTRUCTIONS = (
     "waste-for-agents:給 AI agent 的結構化監看訂閱層(pull-first)。\n"
-    "用 create_watch 訂閱某結構化來源的一個 query;之後在每次醒來時呼叫 "
-    "list_changes(since_cursor) 拉出自上次游標以來的變化——沒有變化就秒回空(沉默的號角)。"
+    "用 create_watch 訂閱某結構化來源的一個 query,拿到 watch_id;之後在每次醒來時對"
+    "每個 watch 呼叫 list_changes(watch_id, since_cursor) 拉出該 watch 自上次游標以來的"
+    "變化——每個 watch 是獨立的流、各自 cursor,別把多個混成一條。沒有變化就秒回空"
+    "(沉默的號角)。"
 )
+
+
+def _norm_cursor(since_cursor: int | None) -> int:
+    """cursor 正規化(single source of truth):None → 0,與 store.events_since 內部
+    after=0 對齊。所有回傳 cursor 的路徑(正常空集、auth-error、ownership-reject、
+    缺 watch_id)一律經此,避免 None vs 0 不一致而洩漏 watch 存在性。"""
+    return since_cursor if since_cursor is not None else 0
 
 
 def _event_dict(e: ChangeEvent) -> dict[str, Any]:
@@ -150,18 +159,43 @@ class Service:
         return self.store.list_watch_ids_by_api_key(caller_key_id)
 
     def list_changes(
-        self, since_cursor: int | None, caller_key_id: str | None = None
+        self,
+        since_cursor: int | None,
+        caller_key_id: str | None = None,
+        watch_id: str | None = None,
+        *,
+        allow_digest: bool = False,
     ) -> dict[str, Any]:
-        """拉自游標以來的變化(只回呼叫者歸戶的 watch),套 per-watch 計費 gate(C-stub)。
+        """拉自游標以來的變化,套 per-watch 計費 gate(C-stub)。
 
-        privacy scope:事件先過濾成「呼叫者擁有的 watch」——不洩漏他人訂了什麼。
-        游標仍推進到「全域」高水位(events_since 給的 cursor),呼叫者下次不重掃他人
-        事件;他人事件不誤卡呼叫者。gated 輪事件換升級 stub。計量只動呼叫者自己的
-        watch(持久水位 idempotent → `/changes` 鏡像共用此路徑不重計)。
+        兩種模式,由呼叫端決定意圖(policy 在 caller、不靠 watch_id 是否 None 猜):
+        - **per-watch**(watch_id 給定):先驗 ownership(非擁有/不存在 → 與 owned-空
+          位元級相同的空回應,不洩漏存在性),再回該 watch 的事件、per-watch 游標高水位。
+        - **digest**(watch_id=None 且 allow_digest=True,僅 HTTP `/changes` 面):回全部
+          呼叫者歸戶的 watch(事件先過濾成擁有的,不洩漏他人訂閱),游標為全域高水位。
+        - watch_id=None 且 not allow_digest(MCP 面)→ error,不靜默給混流。
+
+        gated 輪事件換升級 stub。計量只動呼叫者自己的 watch(持久水位 idempotent →
+        `/changes` 鏡像共用此路徑不重計)。所有回傳 cursor 經 _norm_cursor 收斂。
         """
-        events, cursor = self.store.events_since(since_cursor)
-        owned = self._owned_watch_ids(caller_key_id)
-        events = [e for e in events if e.watch_id in owned]
+        if watch_id is None:
+            if not allow_digest:
+                return {
+                    "error": "watch_id required",
+                    "events": [],
+                    "cursor": _norm_cursor(since_cursor),
+                }
+            # digest(HTTP):全撈 → 過濾成呼叫者擁有的
+            events, cursor = self.store.events_since(since_cursor)
+            owned = self._owned_watch_ids(caller_key_id)
+            events = [e for e in events if e.watch_id in owned]
+        else:
+            # per-watch:先驗 ownership(沿用 replay/delete 模式),reject 回與 owned-空
+            # 位元級相同(無 error 欄位)——error 之有無本身即洩漏存在性。
+            w = self.store.get_watch(watch_id)
+            if w is None or w.api_key_id != caller_key_id:
+                return {"events": [], "cursor": _norm_cursor(since_cursor)}
+            events, cursor = self.store.events_since(since_cursor, watch_id=watch_id)
         if self.unmetered:
             # self-host:跳過計費 gate,全交付(游標照常推進)。
             return {"events": [_event_dict(e) for e in events], "cursor": cursor}
@@ -285,17 +319,29 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
         )
 
     @mcp.tool()
-    def list_changes(since_cursor: int | None = None, *, ctx: _Ctx) -> dict[str, Any]:
-        """拉自 since_cursor 以來、你自己 watch 的變化。回 {events, cursor}。需 Bearer key。(read)
+    def list_changes(
+        watch_id: str | None = None,
+        since_cursor: int | None = None,
+        *,
+        ctx: _Ctx,
+    ) -> dict[str, Any]:
+        """拉自 since_cursor 以來、某個 watch 的變化。回 {events, cursor}。需 Bearer key。(read)
 
-        只回呼叫者歸戶的 watch(privacy)。免費額度用完的 watch 回 gated stub;
-        付費後用 replay_watch 補拿。
+        **watch_id 必填**:每個 watch 是獨立可消費的流、各自 cursor 高水位——用
+        list_watches 取得你的 watch_id,對每個各存一個 cursor 分別拉取。省略 watch_id
+        會回 error(不會靜默把多個 watch 混成一條流)。免費額度用完的 watch 回 gated
+        stub;付費後用 replay_watch 補拿。
         """
         try:
             caller = _caller_from_ctx(ctx)
         except AuthError:
-            return {"error": "unauthorized", "events": [], "cursor": since_cursor}
-        return service.list_changes(since_cursor, caller_key_id=caller)
+            return {
+                "error": "unauthorized",
+                "events": [],
+                "cursor": _norm_cursor(since_cursor),
+            }
+        # MCP 面:allow_digest 預設 False → 缺 watch_id 由 service 回 error
+        return service.list_changes(since_cursor, caller_key_id=caller, watch_id=watch_id)
 
     @mcp.tool()
     def replay_watch(watch_id: str, *, ctx: _Ctx) -> dict[str, Any]:
@@ -345,8 +391,14 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
         return {"status": "ok", "watches": len(store.list_watches())}
 
     @app.get("/changes")
-    def changes(request: Request, since: int | None = None) -> Any:
+    def changes(
+        request: Request, since: int | None = None, watch: str | None = None
+    ) -> Any:
         """list_changes 的唯讀 HTTP 鏡像,給 shell 端 SessionStart hook 用。
+
+        `watch` 選填:給定 → 只回該 watch(per-watch);**省略 → digest**(全部歸戶
+        watch,單一游標)——shell hook 無法列 watch_id,digest 是它的本命模式,故此面
+        允許 digest(`allow_digest=True`),與 MCP tool(必帶 watch_id)刻意不同。
 
         Authorization: Bearer <key> 選填——有則 scope 到該 key 的 watch(計量共用持久
         水位、不重計);無則只見無歸戶(本地/dogfood)watch。給了但無效 → 401。
@@ -358,7 +410,9 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
                 caller = authenticate(store, rate_limiter, key).id
             except AuthError:
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return service.list_changes(since, caller_key_id=caller)
+        return service.list_changes(
+            since, caller_key_id=caller, watch_id=watch, allow_digest=True
+        )
 
     app.mount("/mcp", mcp.streamable_http_app())
     return app

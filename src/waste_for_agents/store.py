@@ -386,13 +386,26 @@ class Store:
         assert event_id is not None  # AUTOINCREMENT 必有值
         return event_id
 
-    def events_since(self, cursor: int | None) -> tuple[list[ChangeEvent], int]:
-        """回 (events, new_cursor)。cursor=None 從頭;無新事件回 ([], cursor or 0)。"""
+    def events_since(
+        self, cursor: int | None, watch_id: str | None = None
+    ) -> tuple[list[ChangeEvent], int]:
+        """回 (events, new_cursor)。cursor=None 從頭;無新事件回 ([], cursor or 0)。
+
+        watch_id 給定 → 只回該 watch 的事件、cursor 為該 watch 在全域 id 空間的高水位
+        (per-watch 消費);None → 全部(digest)。索引 idx_change_events_watch 支撐前者。
+        """
         after = cursor if cursor is not None else 0
         with self._lock:
-            rows = self.conn.execute(
-                "SELECT * FROM change_events WHERE id > ? ORDER BY id", (after,)
-            ).fetchall()
+            if watch_id is None:
+                rows = self.conn.execute(
+                    "SELECT * FROM change_events WHERE id > ? ORDER BY id", (after,)
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT * FROM change_events WHERE watch_id = ? AND id > ? "
+                    "ORDER BY id",
+                    (watch_id, after),
+                ).fetchall()
         events = [self._row_to_event(r) for r in rows]
         new_cursor = events[-1].id if events else after
         return events, new_cursor

@@ -39,8 +39,8 @@
     </span></span>
     <div class="term no-copy" style="width:100%">
       <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · the drop</div>
-<pre><span class="c-com"># your agent wakes, asks once</span>
-<span class="c-fn">list_changes</span>()
+<pre><span class="c-com"># your agent wakes, asks once — per watch</span>
+<span class="c-fn">list_changes</span>(watch_id=<span class="c-str">"hn"</span>)
 <span class="c-com"># usually silence — nothing shifted upstream:</span>
 { <span class="c-str">"events"</span>: [], <span class="c-str">"cursor"</span>: 41 }
 
@@ -201,12 +201,12 @@ echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
       <h3>Subscribe &amp; drain</h3>
       <p class="note">In your agent: create a watch, then pull changes. Give a homepage URL — discovery finds the feed (it tries <code class="inl">&lt;link&gt;</code>, then <code class="inl">/feed</code>, <code class="inl">/rss</code>…).</p>
       <div class="term"><div class="bar">in your agent</div>
-<pre><span class="c-fn">create_watch</span>(
+<pre>w = <span class="c-fn">create_watch</span>(
   source=<span class="c-str">"rss"</span>,
   query={<span class="c-str">"url"</span>: <span class="c-str">"https://news.ycombinator.com/news"</span>},
-  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)
+  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)   <span class="c-com"># → {"watch_id": ...}</span>
 
-<span class="c-fn">list_changes</span>()   <span class="c-com"># a batch on first wake, then silence until something shifts</span></pre></div>
+<span class="c-fn">list_changes</span>(watch_id=w[<span class="c-str">"watch_id"</span>])   <span class="c-com"># this watch's changes — each watch drains on its own cursor</span></pre></div>
     </div></div>
   </div>
 </div></section>

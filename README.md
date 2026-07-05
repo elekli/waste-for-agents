@@ -58,12 +58,14 @@ X-Tristero-Status: Silent
 |------|------|------|
 | `issue_key()` | write(免認證) | 自助發一把 free-tier key;回明文一次(只存 hash) |
 | `create_watch(source, query, key_columns, ignore_columns, interval_s)` | write | 建立一個監看(歸戶呼叫者) |
-| `list_changes(since_cursor)` | read | 拉自游標以來、你自己 watch 的變化(無變化秒回 no-op) |
+| `list_changes(watch_id, since_cursor)` | read | 拉某個 watch 自游標以來的變化(無變化秒回 no-op);**watch_id 必帶**——每個 watch 各自獨立 cursor |
 | `replay_watch(watch_id)` | read | 付費後補拿被 gate 保留(withheld)的變化 |
 | `list_watches()` | read | 列出你自己的監看 + 各自 status(含 `last_error`) |
 | `delete_watch(watch_id)` | write | 刪除你自己的監看 |
 
-唯讀 HTTP 鏡像:`GET /changes?since=<cursor>`(`Authorization` 選填,有則 scope)等價 `list_changes`,供 shell 端 hook 用(免 MCP handshake)。健康檢查 `GET /health`。
+唯讀 HTTP 鏡像:`GET /changes?since=<cursor>[&watch=<watch_id>]`(`Authorization` 選填,有則 scope)。供 shell 端 hook 用(免 MCP handshake):**省略 `watch` → digest**(全部歸戶 watch,單一游標;shell hook 無法列 watch_id,digest 是它的本命),帶 `watch` → per-watch。與 MCP tool(必帶 watch_id)刻意不同。健康檢查 `GET /health`。
+
+> **cursor 語意:** per-watch 回的 `cursor` 是「該 watch 在**全域** `change_events.id` 空間的高水位」,不是 watch-local 計數器。client 對每個 watch 各存一個 cursor、原樣回傳即可;不同 watch 的 cursor 數值不可互用。
 
 ## Quickstart — the drop
 
@@ -102,8 +104,8 @@ create_watch(
   ignore_columns=[],
   interval_s=3600)
 
-// 之後每次醒來:沉默,或一批新貼文降臨(content 已轉乾淨 Markdown)
-list_changes()
+// 之後每次醒來:對每個 watch(用其 create_watch 回傳的 watch_id)拉——沉默,或一批新貼文降臨(content 已轉乾淨 Markdown)
+list_changes(watch_id="<create_watch 回的 watch_id>")
 // → {"events": [
 //      { "id": 12, "watch_id": "...", "kind": "added",
 //        "row_key": "[\"<id>\"]", "run_seq": 3,
@@ -134,7 +136,7 @@ create_watch(
   interval_s=300)
 
 // 之後每次醒來:沉默,或一則降臨
-list_changes()            // → {"events":[...], "cursor": N}
+list_changes(watch_id="<該 watch_id>")   // → {"events":[...], "cursor": N}
 ```
 
 **短命 agent(Claude Code session)** 用 SessionStart hook 開場拉一次:見

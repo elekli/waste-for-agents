@@ -39,8 +39,8 @@
     </span></span>
     <div class="term no-copy" style="width:100%">
       <div class="bar"><span class="dotrow"><span class="d" style="background:var(--signal-500)"></span><span class="d" style="background:var(--brass-500)"></span><span class="d" style="background:var(--green-500)"></span></span>&nbsp;list_changes · 배달</div>
-<pre><span class="c-com"># 에이전트가 깨어나 한 번 묻는다</span>
-<span class="c-fn">list_changes</span>()
+<pre><span class="c-com"># 에이전트가 깨어나 watch마다 한 번 묻는다</span>
+<span class="c-fn">list_changes</span>(watch_id=<span class="c-str">"hn"</span>)
 <span class="c-com"># 보통은 침묵 — 상류에서 바뀐 게 없다:</span>
 { <span class="c-str">"events"</span>: [], <span class="c-str">"cursor"</span>: 41 }
 
@@ -142,12 +142,12 @@ echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
       <h3>구독하고 빼내기</h3>
       <p class="note">에이전트에서: watch 를 만들고 변화를 끌어옵니다. 홈페이지 URL 을 주면 디스커버리가 피드를 찾습니다(<code class="inl">&lt;link&gt;</code>, 그다음 <code class="inl">/feed</code>, <code class="inl">/rss</code> … 순서로 시도).</p>
       <div class="term"><div class="bar">에이전트에서</div>
-<pre><span class="c-fn">create_watch</span>(
+<pre>w = <span class="c-fn">create_watch</span>(
   source=<span class="c-str">"rss"</span>,
   query={<span class="c-str">"url"</span>: <span class="c-str">"https://news.ycombinator.com/news"</span>},
-  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)
+  key_columns=[<span class="c-str">"id"</span>], ignore_columns=[], interval_s=3600)   <span class="c-com"># → {"watch_id": ...}</span>
 
-<span class="c-fn">list_changes</span>()   <span class="c-com"># 첫 깨어남에 한 묶음, 그 뒤엔 뭔가 바뀔 때까지 침묵</span></pre></div>
+<span class="c-fn">list_changes</span>(watch_id=w[<span class="c-str">"watch_id"</span>])   <span class="c-com"># 이 watch의 변경 — 각 watch는 자기 cursor로 소진</span></pre></div>
     </div></div>
   </div>
 </div></section>

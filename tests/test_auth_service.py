@@ -103,7 +103,7 @@ def test_list_changes_anonymous_sees_only_unowned(tmp_path):
     wfree = _watch(s, api_key_id=None)  # 無歸戶
     _added_round(s, wowned, 1, ["o1"])
     _added_round(s, wfree, 1, ["f1"])
-    res = svc.list_changes(None, caller_key_id=None)
+    res = svc.list_changes(None, caller_key_id=None, allow_digest=True)
     assert {e["watch_id"] for e in res["events"]} == {wfree.id}  # 只見無歸戶
     assert all(e["watch_id"] != wowned.id for e in res["events"])  # 零 owned 洩漏
 
@@ -116,7 +116,7 @@ def test_replay_ownership_rejects_nonowner_preserves_withheld(tmp_path):
     wa = _watch(s, api_key_id=k1)  # free_rounds=2
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])
-    svc.list_changes(None, caller_key_id=k1)  # 輪 3 gated
+    svc.list_changes(None, caller_key_id=k1, allow_digest=True)  # 輪 3 gated
     s.set_api_key_tier(k1, "paid")
     rej = svc.replay_watch(wa.id, caller_key_id=k2)  # 非擁有者(即便已 paid)
     assert rej["events"] == [] and rej.get("error")
@@ -134,11 +134,95 @@ def test_list_changes_scoped_to_caller(tmp_path):
     wb = _watch(s, api_key_id=k2)
     _added_round(s, wa, 1, ["a1"])
     _added_round(s, wb, 1, ["b1"])
-    res = svc.list_changes(None, caller_key_id=k1)
+    res = svc.list_changes(None, caller_key_id=k1, allow_digest=True)
     assert {e["watch_id"] for e in res["events"]} == {wa.id}  # 只見自己的
     # 游標推進到全域高水位(不重掃他人事件)
     all_evs, gmax = s.events_since(None)
     assert res["cursor"] == gmax
+
+
+def test_list_changes_requires_watch_id_on_mcp_face(tmp_path):
+    # MCP 面(allow_digest 預設 False):省略 watch_id → error,不靜默給混流
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    _watch(s, api_key_id=k1)
+    res = svc.list_changes(None, caller_key_id=k1)
+    assert res["error"] == "watch_id required"
+    assert res["events"] == []
+    assert res["cursor"] == 0  # _norm_cursor(None)
+
+
+def test_list_changes_per_watch_returns_only_that_watch(tmp_path):
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    wa = _watch(s, api_key_id=k1)
+    wb = _watch(s, api_key_id=k1)
+    _added_round(s, wa, 1, ["a1"])
+    _added_round(s, wb, 1, ["b1"])
+    res = svc.list_changes(None, caller_key_id=k1, watch_id=wa.id)
+    assert {e["watch_id"] for e in res["events"]} == {wa.id}  # 只 wa,不含 wb
+    assert {e["row_key"] for e in res["events"]} == {'["a1"]'}
+
+
+def test_list_changes_per_watch_ownership_reject_bit_identical(tmp_path):
+    # 非擁有者 / 不存在 watch_id → 與「owned-但-空」位元級相同,無 error 欄位(不洩漏存在性)
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    k2, _ = _key(s)
+    wa = _watch(s, api_key_id=k1)  # k1 擁有,無事件 → owned-空
+    wb = _watch(s, api_key_id=k2)  # k2 擁有 → 對 k1 是非擁有者
+
+    owned_empty = svc.list_changes(None, caller_key_id=k1, watch_id=wa.id)
+    non_owner = svc.list_changes(None, caller_key_id=k1, watch_id=wb.id)
+    nonexistent = svc.list_changes(None, caller_key_id=k1, watch_id="does-not-exist")
+
+    # 位元級相同:三者完全一致
+    assert owned_empty == non_owner == nonexistent
+    # 且皆無 error 欄位(error 之有無本身即洩漏存在性)
+    assert "error" not in owned_empty
+    # 特釘 since_cursor=None 洞:cursor 皆正規化為 0
+    assert owned_empty["cursor"] == non_owner["cursor"] == 0
+
+
+def test_list_changes_cursor_norm_service_paths_consistent(tmp_path):
+    # 三條 service 路徑(digest-空 / 缺 watch_id / ownership-reject)對 None 回同一 cursor
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    digest_empty = svc.list_changes(None, caller_key_id=k1, allow_digest=True)["cursor"]
+    missing_wid = svc.list_changes(None, caller_key_id=k1)["cursor"]
+    reject = svc.list_changes(None, caller_key_id=k1, watch_id="nope")["cursor"]
+    assert digest_empty == missing_wid == reject == 0
+
+
+def test_list_changes_per_watch_gate_triggers(tmp_path):
+    # per-watch 路徑也套計費 gate(review Important):超 free_rounds 的 watch,帶
+    # watch_id 拉回 gated stub(既有 metering 測試只走 digest 面 allow_digest=True)
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    wa = _watch(s, api_key_id=k1)  # free_rounds=2
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])  # 輪 3 超額
+    res = svc.list_changes(None, caller_key_id=k1, watch_id=wa.id)
+    gated = [e for e in res["events"] if e.get("gated")]
+    assert len(gated) == 1 and gated[0]["row_key"] == '["a3"]'  # 輪 3 stub
+
+
+def test_list_changes_per_watch_unmetered_delivers_all(tmp_path):
+    # self-host(unmetered):per-watch 也全交付、不 stub
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s, unmetered=True)
+    k1, _ = _key(s)
+    wa = _watch(s, api_key_id=k1)
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])
+    res = svc.list_changes(None, caller_key_id=k1, watch_id=wa.id)
+    assert all(not e.get("gated") for e in res["events"])
+    assert {e["row_key"] for e in res["events"]} == {'["a1"]', '["a2"]', '["a3"]'}
 
 
 def test_list_changes_gating_within_caller_partition(tmp_path):
@@ -151,7 +235,7 @@ def test_list_changes_gating_within_caller_partition(tmp_path):
     for i, x in enumerate(["a1", "a2", "a3"], start=1):
         _added_round(s, wa, i, [x])  # wa 輪 3 超 free_rounds=2
     _added_round(s, wb, 1, ["b1"])
-    res = svc.list_changes(None, caller_key_id=k1)
+    res = svc.list_changes(None, caller_key_id=k1, allow_digest=True)
     gated = [e for e in res["events"] if e.get("gated")]
     assert len(gated) == 1 and gated[0]["row_key"] == '["a3"]'  # wa 超額 stub
     ok = [e for e in res["events"] if not e.get("gated")]

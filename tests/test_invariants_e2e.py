@@ -169,7 +169,7 @@ def test_inv7_gate_delays_not_loses(tmp_path):
     _round(s, src, wid, [{"id": "a", "c": "A"}])  # 計費輪 1
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}])  # 輪 2
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}, {"id": "c", "c": "C"}])  # 輪 3 超額
-    res = svc.list_changes(None, caller_key_id=kid)
+    res = svc.list_changes(None, caller_key_id=kid, allow_digest=True)
     gated = [e for e in res["events"] if e.get("gated")]
     assert {e["row_key"] for e in gated} == {'["c"]'}  # 輪 3 被 gate
     # 付費後補拿,不遺失;再 replay 回空(恰一次)
@@ -192,10 +192,10 @@ def test_inv8_round_metering_correct(tmp_path):
     _round(s, src, wid, [{"id": "a", "c": "A"}])  # added 輪
     _round(s, src, wid, [{"id": "a", "c": "A2"}])  # modified-only(同 id 內容變)→ 不計輪
     _round(s, src, wid, [{"id": "a", "c": "A2"}, {"id": "b", "c": "B"}])  # added 輪
-    svc.list_changes(None, caller_key_id=kid)  # 經 gate 計量
+    svc.list_changes(None, caller_key_id=kid, allow_digest=True)  # 經 gate 計量
     assert s.get_watch(wid).delivered_rounds == 2  # 只算 2 個 added 輪
     # idempotent:同游標重拉不重計(持久水位 last_metered_run_seq)
-    svc.list_changes(None, caller_key_id=kid)
+    svc.list_changes(None, caller_key_id=kid, allow_digest=True)
     assert s.get_watch(wid).delivered_rounds == 2
 
 
@@ -209,23 +209,23 @@ def test_inv9_delivery_once_cursor_monotonic(tmp_path):
     kid = svc.issue_key()["api_key_id"]  # free_rounds=2
     wid = _rolling_watch(s, api_key_id=kid)
     _round(s, src, wid, [{"id": "a", "c": "A"}])  # 計費輪 1
-    r1 = svc.list_changes(None, caller_key_id=kid)
+    r1 = svc.list_changes(None, caller_key_id=kid, allow_digest=True)
     c1 = r1["cursor"]
     assert {e["row_key"] for e in r1["events"]} == {'["a"]'}
     # 同游標再拉 → 空 + 游標不倒退(恰一次、單調)
-    r1b = svc.list_changes(c1, caller_key_id=kid)
+    r1b = svc.list_changes(c1, caller_key_id=kid, allow_digest=True)
     assert r1b["events"] == [] and r1b["cursor"] == c1
     # 輪 2(計費輪 2,免費額度內)+ 輪 3(超額被 gate)
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}])
     _round(s, src, wid, [{"id": "a", "c": "A"}, {"id": "b", "c": "B"}, {"id": "c", "c": "C"}])
-    r2 = svc.list_changes(c1, caller_key_id=kid)
+    r2 = svc.list_changes(c1, caller_key_id=kid, allow_digest=True)
     # b 正常交付、c 被 gate 成 stub——但游標仍含 stub 的 id 照常前進(不變式 9:gate 不卡游標)
     gated = [e for e in r2["events"] if e.get("gated")]
     assert {e["row_key"] for e in gated} == {'["c"]'}
     assert r2["cursor"] > c1  # 跨 gated stub 仍單調遞增
     assert r2["cursor"] == max(e["id"] for e in r2["events"])  # 游標 = 含 stub 的最大 id
     # 追上後再拉 → 空、游標不倒退(gated 事件不重複交付)
-    r3 = svc.list_changes(r2["cursor"], caller_key_id=kid)
+    r3 = svc.list_changes(r2["cursor"], caller_key_id=kid, allow_digest=True)
     assert r3["events"] == [] and r3["cursor"] == r2["cursor"]
 
 
