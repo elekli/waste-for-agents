@@ -68,74 +68,69 @@ uv run ruff check .         # lint
 
 ## Chunk 2: Cursor 正規化 helper
 
-### Task 2.1: 正規化 helper 的失敗測試
+> **只接此刻存在的兩條路徑。** ownership-reject / 缺 watch_id 這兩條到 Chunk 3 才生出來,四路徑一致的完整斷言在 Chunk 3 才測(plan-review 修正:別在路徑還沒建時就測它)。
+
+### Task 2.1: 正規化 helper 的失敗測試(兩條現存路徑)
 
 - [ ] `tests/test_server.py`(或新 `tests/test_cursor_norm.py`)加測試:
   - 定義預期:`None` → `0`(與 `events_since(None)` 內部 `after=0` 對齊)
-  - 四條路徑(正常空集 / ownership-reject / 缺 watch_id / auth-error)回傳的 `cursor` 對同一 `since_cursor` 輸入必**相同**
+  - **現存的兩條路徑**(正常空集 / auth-error `server.py:297`)回傳的 `cursor` 對同一 `since_cursor` 輸入必**相同**
 - [ ] 確認失敗
 
-### Task 2.2: 實作正規化 helper 並接四路徑
+### Task 2.2: 實作正規化 helper 並接兩條現存路徑
 
 - [ ] `server.py` 加 `_norm_cursor(since_cursor: int | None) -> int`(`None → 0`)
-- [ ] `list_changes`(service + tool)、`/changes`、auth-error(`server.py:297`)全部回 `_norm_cursor(since_cursor)`
+- [ ] 正常空集回傳 + auth-error(`server.py:297`)改回 `_norm_cursor(since_cursor)`
 - [ ] 確認測試通過
-- [ ] commit:`fix(server): cursor 正規化收斂四路徑(single source of truth)`
+- [ ] commit:`fix(server): 加 cursor 正規化 helper(接現存兩路徑)`
+
+> Chunk 3 生出 ownership-reject / 缺 watch_id 兩條路徑時,一併接上 `_norm_cursor` 並補齊四路徑一致斷言。
 
 ---
 
-## Chunk 3: Service.list_changes — watch_id + ownership + bit-identity
+## Chunk 3: Service per-watch + allow_digest + 兩個 caller(原子綠落地)
 
-### Task 3.1: 失敗測試
+> **plan-review 修正:merge 原 Chunk 3+4。** service 行為變更(`watch_id is None + allow_digest=False → error`)一旦落地,若 caller(MCP tool / HTTP `/changes`)沒同 commit 改好,中間狀態會:HTTP digest 壞、MCP 全報錯、`test_invariants_e2e` 7 處紅。故 service 簽章 + 兩個 caller 改寫 + **全部破壞測試遷移**必須同一 commit 綠落地。
 
-- [ ] `tests/test_server.py` / `test_metering.py` 加:
-  - **缺 watch_id(None):** 回 `{error: "watch_id required", events: [], cursor: <norm>}`
-  - **ownership-reject:** 非擁有者 / 不存在 watch_id → 回應與「owned-但-空」**位元級相同**(含 `cursor`,無 `error` 欄位),不洩漏存在性
-  - **特釘 `since_cursor=None` 洞:** owned-空 vs non-owned,省略 cursor 時 `cursor` 欄位相同
+### Task 3.1: 失敗測試(service + 兩 caller + 四路徑一致)
+
+- [ ] `tests/test_server.py` / `test_metering.py` / `test_auth_service.py` 加:
+  - **MCP 面(`allow_digest=False`)缺 watch_id** → `{error: "watch_id required", events: [], cursor: <_norm_cursor>}`(非硬參數 validation error;形狀含 `cursor`)
+  - **MCP `list_changes(watch_id=X)`** → per-watch,認證 + ownership 正確
+  - **ownership-reject:** 非擁有者 / 不存在 watch_id → 與「owned-但-空」**位元級相同**(含 `cursor`、皆無 `error` 欄位),不洩漏存在性
+  - **特釘 `since_cursor=None` 洞:** owned-空 path 的 `cursor` == `_norm_cursor(since_cursor)`,且 == non-owned reject 的 `cursor`
+  - **四路徑一致(補齊 Chunk 2):** 正常空集 / auth-error / ownership-reject / 缺 watch_id,四者 `cursor` 對同一輸入相同
+  - **HTTP `/changes?since=`(無 watch,`allow_digest=True`)** → digest(全擁有 watch),與現行相容
+  - **HTTP `/changes?since=&watch=X`** → per-watch
   - **per-watch 計費 gate:** 免費額度用完 → gated stub;`unmetered` 全交付
 - [ ] 確認失敗
 
-### Task 3.2: 實作 Service.list_changes(watch_id)
+### Task 3.2: 實作 service + 兩個 caller(同一 commit)
 
-- [ ] `server.py:152` 簽章加 `watch_id: str | None`
-- [ ] `watch_id is None` → 回 error dict(`_norm_cursor`)
-- [ ] ownership:`get_watch(watch_id)`,`watch is None or watch.api_key_id != caller` → 回與 owned-空 位元級相同的 dict(沿用 replay/delete 模式)
-- [ ] 通過則 `store.events_since(since_cursor, watch_id=watch_id)`;套現有 per-watch 計費 gate(`meter_and_mark`)
-- [ ] 確認測試通過
-- [ ] commit:`feat(server): list_changes per-watch + ownership + bit-identity reject`
+- [ ] **Service**(`server.py:152`):簽章 `list_changes(since_cursor, caller_key_id=None, watch_id=None, *, allow_digest=False)`
+  - `watch_id is None and not allow_digest` → error dict(`_norm_cursor`)
+  - `watch_id is None and allow_digest` → digest(現行行為:全撈 → 過濾 owned)
+  - `watch_id` 給定 → ownership(`get_watch`,`watch is None or api_key_id != caller` → 與 owned-空 **位元級相同** reject,沿用 replay/delete);通過則 `store.events_since(since_cursor, watch_id=watch_id)`
+  - 全路徑 cursor 走 `_norm_cursor`(接上 Chunk 2 的 helper,補齊四路徑)
+  - per-watch 計費 gate(`meter_and_mark`)不變
+- [ ] **MCP tool**(`server.py:288`):`watch_id: str | None = None`;呼叫 service **`allow_digest=False`**(手動檢查落在 service)
+- [ ] **HTTP**(`server.py:347`):`changes(request, since=None, watch=None)`;呼叫 service `watch_id=watch, allow_digest=True`(watch=None → digest)
+- [ ] **遷移所有破壞測試(同 commit):** `tests/test_invariants_e2e.py`(7 處 `list_changes(None, caller_key_id=kid)`,行 172/195/198/212/216/221/228)——digest 型斷言改帶 `allow_digest=True`、per-watch 型改帶 `watch_id`;`test_metering.py` / `test_server.py` / `test_auth_service.py` 同步
+- [ ] `uv run pytest -q` 全綠
+- [ ] commit:`feat(server): list_changes per-watch(watch_id 必帶)、/changes digest 顯式`
 
----
-
-## Chunk 4: MCP tool + HTTP 鏡像 wiring
-
-### Task 4.1: 失敗測試
-
-- [ ] `tests/test_server.py` / `test_auth_service.py` 加:
-  - **MCP `list_changes()` 省略 watch_id** → error dict(非硬參數 validation error;驗證形狀含 `cursor`)
-  - **MCP `list_changes(watch_id=X)`** → per-watch,認證 + ownership 正確
-  - **HTTP `/changes?since=`(無 watch)** → digest(全擁有 watch),與現行相容
-  - **HTTP `/changes?since=&watch=X`** → per-watch
-- [ ] 確認失敗
-
-### Task 4.2: 實作 tool + mirror
-
-- [ ] MCP tool(`server.py:288`):`watch_id: str | None = None` + 傳給 service(手動檢查在 service 層)
-- [ ] HTTP(`server.py:347`):`changes(request, since=None, watch=None)`;`service.list_changes(since, caller, watch_id=watch)` — **watch=None 時仍要走 digest**,故 service 需區分「digest(HTTP 允許)」vs「缺 watch_id(MCP 報錯)」→ 見下方設計註記
-- [ ] 確認測試通過
-- [ ] commit:`feat(server): list_changes tool 必帶 watch_id、/changes 保留 digest`
-
-> **設計註記(digest vs 缺 watch_id 的區分):** MCP 省略 watch_id = 使用者錯誤(報錯);HTTP 省略 watch = 合法 digest。兩者都呼叫 `service.list_changes`,但語意不同。做法:service 加一個明確參數區分意圖(如 `allow_digest: bool`,HTTP 傳 `True`、MCP 傳 `False`),而非靠 watch_id 是否為 None 猜。`allow_digest=False and watch_id is None` → error;`allow_digest=True and watch_id is None` → digest。**這是本 chunk 要釘死的關鍵語意,實作前先確認測試涵蓋兩條。**
+> **allow_digest 是關鍵語意 seam**:MCP 省略 watch_id = 使用者錯誤(報錯);HTTP 省略 watch = 合法 digest。policy 在**呼叫端**(caller 知道自己能力:HTTP=True、MCP=False),別靠 watch_id 是否 None 猜意圖。
 
 ---
 
-## Chunk 5: Onboarding 文案 + 破壞面 docs
+## Chunk 4: Onboarding 文案 + 破壞面 docs
 
-### Task 5.1: INSTRUCTIONS + 測試
+### Task 4.1: INSTRUCTIONS + 測試
 
 - [ ] 若有測試斷言 `INSTRUCTIONS` 內容則同步;`server.py:49` 改教 `list_changes(watch_id, since_cursor)`
 - [ ] commit:`docs(server): INSTRUCTIONS 教 per-watch list_changes`
 
-### Task 5.2: README + quickstart(逐一核對 MCP vs HTTP 形式)
+### Task 4.2: README + quickstart(逐一核對 MCP vs HTTP 形式)
 
 - [ ] `README.md`:MCP `list_changes` 範例補 watch_id;`/changes?since=` HTTP 不動
 - [ ] `docs/index.html` + `pt/ja/ko`:同上逐頁核對(MCP 呼叫補 watch_id;HTTP 範例保留)
@@ -175,7 +170,7 @@ uv run ruff check .         # lint
 
 ## 風險 & 注意
 
-- **digest vs 缺 watch_id 的語意混淆**(Chunk 4 設計註記)= 本計畫最容易做錯的點。用顯式 `allow_digest` 區分,別靠 watch_id 是否 None 猜。
+- **digest vs 缺 watch_id 的語意混淆**(Chunk 3 的 `allow_digest` seam)= 本計畫最容易做錯的點。policy 在呼叫端(HTTP=True、MCP=False),別靠 watch_id 是否 None 猜。service + 兩 caller + 破壞測試遷移**同一 commit** 落地,否則中間 commit 紅。
 - **bit-identity**:reject 回應與 owned-空必須連 `cursor` 欄位都相同、且都無 `error` 欄位(否則 `error` 之有無即洩漏存在性)。sub-skill:對照 `replay_watch`/`delete_watch` 現有模式。
 - **SSH push**:key 不在 agent(治理:restricted 帳號 key 不進 Keychain,但此 repo 是 personal/standard——仍撞 publickey denied)。push 前 elek `ssh-add ~/.ssh/id_personal` 或由 elek push。**永不直推 main。**
 - **mypy strict**:新參數與 helper 都要帶型別;`watch_id: str | None`、`_norm_cursor` 回 `int`。
