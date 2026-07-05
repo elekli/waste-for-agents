@@ -65,6 +65,8 @@ X-Tristero-Status: Silent
 
 唯讀 HTTP 鏡像:`GET /changes?since=<cursor>[&watch=<watch_id>]`(`Authorization` 選填,有則 scope)。供 shell 端 hook 用(免 MCP handshake):**省略 `watch` → digest**(全部歸戶 watch,單一游標;shell hook 無法列 watch_id,digest 是它的本命),帶 `watch` → per-watch。與 MCP tool(必帶 watch_id)刻意不同。健康檢查 `GET /health`。
 
+> **cursor 語意:** per-watch 回的 `cursor` 是「該 watch 在**全域** `change_events.id` 空間的高水位」,不是 watch-local 計數器。client 對每個 watch 各存一個 cursor、原樣回傳即可;不同 watch 的 cursor 數值不可互用。
+
 ## Quickstart — the drop
 
 ```bash

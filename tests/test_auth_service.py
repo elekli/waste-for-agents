@@ -198,6 +198,33 @@ def test_list_changes_cursor_norm_service_paths_consistent(tmp_path):
     assert digest_empty == missing_wid == reject == 0
 
 
+def test_list_changes_per_watch_gate_triggers(tmp_path):
+    # per-watch 路徑也套計費 gate(review Important):超 free_rounds 的 watch,帶
+    # watch_id 拉回 gated stub(既有 metering 測試只走 digest 面 allow_digest=True)
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s)
+    k1, _ = _key(s)
+    wa = _watch(s, api_key_id=k1)  # free_rounds=2
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])  # 輪 3 超額
+    res = svc.list_changes(None, caller_key_id=k1, watch_id=wa.id)
+    gated = [e for e in res["events"] if e.get("gated")]
+    assert len(gated) == 1 and gated[0]["row_key"] == '["a3"]'  # 輪 3 stub
+
+
+def test_list_changes_per_watch_unmetered_delivers_all(tmp_path):
+    # self-host(unmetered):per-watch 也全交付、不 stub
+    s = Store.open(tmp_path / "a.db")
+    svc = Service(s, unmetered=True)
+    k1, _ = _key(s)
+    wa = _watch(s, api_key_id=k1)
+    for i, x in enumerate(["a1", "a2", "a3"], start=1):
+        _added_round(s, wa, i, [x])
+    res = svc.list_changes(None, caller_key_id=k1, watch_id=wa.id)
+    assert all(not e.get("gated") for e in res["events"])
+    assert {e["row_key"] for e in res["events"]} == {'["a1"]', '["a2"]', '["a3"]'}
+
+
 def test_list_changes_gating_within_caller_partition(tmp_path):
     # 不變式 9 在「同一呼叫者多 watch」下:一個 watch 超額被 gate 不卡同呼叫者另一 watch
     s = Store.open(tmp_path / "a.db")

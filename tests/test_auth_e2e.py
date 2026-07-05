@@ -64,6 +64,11 @@ async def test_mcp_tool_enforces_bearer_auth(tmp_path):
                 await session.initialize()
                 rejected = _tool_payload(await session.call_tool("create_watch", args))
                 assert "unauthorized" in rejected.get("error", "")
+                # auth-error path:list_changes 無 key 回 unauthorized + 正規化 cursor 0
+                un = _tool_payload(
+                    await session.call_tool("list_changes", {"watch_id": "x"})
+                )
+                assert un["error"] == "unauthorized" and un["cursor"] == 0
                 issued = _tool_payload(await session.call_tool("issue_key", {}))
                 key = issued["api_key"]
                 assert key.startswith("wfa_")
@@ -77,5 +82,23 @@ async def test_mcp_tool_enforces_bearer_auth(tmp_path):
                 wid = created["watch_id"]
                 listed = _tool_payload(await session.call_tool("list_watches", {}))
                 assert [x["id"] for x in listed["watches"]] == [wid]
+
+                # per-watch 消費走真 MCP tool(param 綁定 watch_id-first + delegate)
+                eid = store.append_event(wid, "added", "k1", {"row": {"id": "1"}})
+                pw = _tool_payload(
+                    await session.call_tool("list_changes", {"watch_id": wid})
+                )
+                assert [e["row_key"] for e in pw["events"]] == ["k1"]
+                assert pw["cursor"] == eid
+                # 缺 watch_id:MCP 面報錯,不靜默給混流
+                missing = _tool_payload(await session.call_tool("list_changes", {}))
+                assert missing["error"] == "watch_id required"
+                assert missing["events"] == [] and missing["cursor"] == 0
+                # 非擁有/不存在 watch_id:空 dict、無 error 欄位(不洩漏存在性)
+                reject = _tool_payload(
+                    await session.call_tool("list_changes", {"watch_id": "nope"})
+                )
+                assert reject == {"events": [], "cursor": 0}
+                assert "error" not in reject
     finally:
         server.should_exit = True

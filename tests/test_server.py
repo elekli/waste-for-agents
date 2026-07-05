@@ -94,3 +94,9 @@ def test_http_health_and_changes(tmp_path) -> None:
         # 不存在的 watch → 空(不洩漏),digest(無 watch)則照回
         c4 = client.get("/changes", params={"watch": "nope"})
         assert c4.json()["events"] == []
+
+        # per-watch + since 併用:cursor 前進(HTTP 面端到端)
+        c5 = client.get("/changes", params={"watch": wid, "since": 0})
+        assert [e["id"] for e in c5.json()["events"]] == [e1]
+        c6 = client.get("/changes", params={"watch": wid, "since": e1})
+        assert c6.json()["events"] == [] and c6.json()["cursor"] == e1
