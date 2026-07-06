@@ -82,7 +82,7 @@ KEY=$(uv run python -m waste_for_agents issue-key)
 
 # 3. 把它加進 agent(Claude Code)——header 設一次,所有呼叫自動帶上
 #    注意:MCP server 必須「先 add 再開 Claude Code session」,session 中途 add 不會載入其 tool
-claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ \
+claude mcp add --transport http posthorn http://127.0.0.1:8848/mcp/ \
   --header "Authorization: Bearer $KEY"
 ```
 
