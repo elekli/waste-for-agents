@@ -1,0 +1,13 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.elekli/waste-for-agents",
+  "title": "posthorn",
+  "description": "A pull-first change feed for AI agents: watch RSS/feeds/APIs on a schedule and pull only the real row-level diff (ignores timestamp churn) via the list_changes MCP tool, one cursor per source.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/elekli/waste-for-agents",
+    "source": "github",
+    "id": "1275889674"
+  },
+  "websiteUrl": "https://github.com/elekli/waste-for-agents#readme"
+}

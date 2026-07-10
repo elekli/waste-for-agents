@@ -44,7 +44,7 @@ def _source_default_kind(source: str) -> str:
         return "dataset"
 
 INSTRUCTIONS = (
-    "waste-for-agents:給 AI agent 的結構化監看訂閱層(pull-first)。\n"
+    "posthorn:給 AI agent 的結構化監看訂閱層(pull-first)。\n"
     "用 create_watch 訂閱某結構化來源的一個 query,拿到 watch_id;之後在每次醒來時對"
     "每個 watch 呼叫 list_changes(watch_id, since_cursor) 拉出該 watch 自上次游標以來的"
     "變化——每個 watch 是獨立的流、各自 cursor,別把多個混成一條。沒有變化就秒回空"
@@ -278,7 +278,7 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
     # streamable_http_path="/":streamable app 內部路由設為 /,mount 在 /mcp 後
     # 對外端點即 /mcp/(否則預設 /mcp mount 在 /mcp 會疊成 /mcp/mcp)。
     mcp = FastMCP(
-        name="waste-for-agents", instructions=INSTRUCTIONS, streamable_http_path="/"
+        name="posthorn", instructions=INSTRUCTIONS, streamable_http_path="/"
     )
 
     @mcp.tool()
@@ -384,7 +384,7 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
                 with suppress(asyncio.CancelledError):
                     await task
 
-    app = FastAPI(title="waste-for-agents", lifespan=lifespan)
+    app = FastAPI(title="posthorn", lifespan=lifespan)
 
     @app.get("/health")
     def health() -> dict[str, Any]:

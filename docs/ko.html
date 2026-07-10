@@ -106,14 +106,14 @@ echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
         </div>
         <div class="tabpane" id="pane-claude">
           <div class="term"><div class="bar">터미널</div>
-<pre>claude mcp add --transport http waste http://127.0.0.1:8848/mcp/ --header <span class="c-str">"Authorization: Bearer $KEY"</span>
+<pre>claude mcp add --transport http posthorn http://127.0.0.1:8848/mcp/ --header <span class="c-str">"Authorization: Bearer $KEY"</span>
 <span class="c-com"># 그런 다음 새 Claude Code 세션을 시작</span></pre></div>
         </div>
         <div class="tabpane" id="pane-opencode">
           <div class="term"><div class="bar">opencode.json — 프로젝트 루트 또는 (~/.config/opencode/)</div>
 <pre>{
   <span class="c-str">"mcp"</span>: {
-    <span class="c-str">"waste"</span>: {
+    <span class="c-str">"posthorn"</span>: {
       <span class="c-str">"type"</span>: <span class="c-str">"remote"</span>,
       <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
       <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> },
@@ -127,7 +127,7 @@ echo $KEY   <span class="c-com"># → wfa_…</span></pre></div>
           <div class="term"><div class="bar">.cursor/mcp.json (~/.cursor/mcp.json)</div>
 <pre>{
   <span class="c-str">"mcpServers"</span>: {
-    <span class="c-str">"waste"</span>: {
+    <span class="c-str">"posthorn"</span>: {
       <span class="c-str">"url"</span>: <span class="c-str">"http://127.0.0.1:8848/mcp/"</span>,
       <span class="c-str">"headers"</span>: { <span class="c-str">"Authorization"</span>: <span class="c-str">"Bearer wfa_PASTE-YOUR-KEY"</span> }
     }
