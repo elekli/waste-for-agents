@@ -7,7 +7,11 @@
 
 事件語意(釘死,防止未來誤改):
 - trialing ∈ PAID_STATUSES:創始名單 = 卡號在檔即享全額交付,trial 期不是次級體驗。
-- canceled = 本期末不續,期內權益照舊、tier 不動;revoked 才是權益終止 → free。
+- **canceled/revoked 分流看 event type,不看 data.status**——sandbox 實測
+  (2026-07-11,fixture 在 tests/fixtures/polar/)`subscription.revoked` 的
+  data.status 是 "canceled" 不是 "revoked";status 是 Polar 內部表示,
+  event type 才是穩定語意。revoked 事件 → 權益終止 → free;canceled 事件 →
+  本期末不續、期內權益照舊 → tier 不動;其餘事件按 status ∈ PAID_STATUSES 翻。
 - 未知事件型別回「忽略」而非失敗:webhook 端點對上游新增事件必須寬容,
   否則 Polar 重試風暴;簽章錯誤則絕不寬容(由 verify_webhook 擋)。
 """
@@ -93,16 +97,27 @@ def handle_event(store: Any, event: dict[str, Any]) -> str:
         mail = customer.get("email")
         customer_email = mail if isinstance(mail, str) else None
 
+    # 名單記錄的 status:revoked 事件記我們自己的語意標記 "revoked"
+    # (實測其 data.status 是 "canceled",直接記會讓名單看不出誰已終止)。
+    effective_status = (
+        "revoked" if event_type == "subscription.revoked" else status
+    )
     store.upsert_billing_subscription(
-        sub_id, customer_id=customer_id, customer_email=customer_email, status=status
+        sub_id,
+        customer_id=customer_id,
+        customer_email=customer_email,
+        status=effective_status,
     )
 
     sub = store.get_billing_subscription(sub_id)
     if sub is not None and sub.api_key_id is not None:
+        if event_type == "subscription.revoked":
+            store.set_api_key_tier(sub.api_key_id, "free")
+            return f"tier:{sub.api_key_id}:free"
+        if event_type == "subscription.canceled":
+            # 本期末不續:期內權益照舊,tier 不動
+            return f"recorded:{sub_id}:{effective_status}"
         tier = "paid" if status in PAID_STATUSES else "free"
-        # canceled:本期末不續,期內 tier 照舊(status 非 paid 集合但也非終止)
-        if status == "canceled":
-            return f"recorded:{sub_id}:{status}"
         store.set_api_key_tier(sub.api_key_id, tier)
         return f"tier:{sub.api_key_id}:{tier}"
-    return f"recorded:{sub_id}:{status}"
+    return f"recorded:{sub_id}:{effective_status}"

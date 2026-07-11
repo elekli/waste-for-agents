@@ -163,12 +163,14 @@ def test_bind_then_active_flips_paid(tmp_path: Path) -> None:
 
 
 def test_revoked_flips_free(tmp_path: Path) -> None:
+    """sandbox 實測:revoked 事件的 data.status 是 'canceled' 不是 'revoked'——
+    分流必須看 event type;若誤看 status 會走進 canceled 不降級分支,永不撤銷。"""
     store = _store(tmp_path)
     kid = store.create_api_key("hash1", tier="free")
     handle_event(store, json.loads(_sub_event("subscription.created")))
     store.bind_subscription_key("sub_1", kid)
     handle_event(
-        store, json.loads(_sub_event("subscription.revoked", status="revoked"))
+        store, json.loads(_sub_event("subscription.revoked", status="canceled"))
     )
     assert store.get_api_key_tier(kid) == "free"
     sub = store.get_billing_subscription("sub_1")
@@ -211,7 +213,7 @@ def test_replay_idempotent(tmp_path: Path) -> None:
     handle_event(store, ev)
     handle_event(store, ev)
     store.bind_subscription_key("sub_1", kid)
-    rv = json.loads(_sub_event("subscription.revoked", status="revoked"))
+    rv = json.loads(_sub_event("subscription.revoked", status="canceled"))
     handle_event(store, rv)
     handle_event(store, rv)
     assert store.get_api_key_tier(kid) == "free"
@@ -245,3 +247,42 @@ def test_event_missing_email_tolerated(tmp_path: Path) -> None:
     handle_event(store, json.loads(_sub_event(email=None)))
     sub = store.get_billing_subscription("sub_1")
     assert sub is not None and sub.customer_email is None
+
+
+# --- 真實 payload fixture(Polar sandbox 2026-07-11 抓取,已匿名化)---
+
+FIXTURES = Path(__file__).parent / "fixtures" / "polar"
+
+
+def test_real_payload_lifecycle(tmp_path: Path) -> None:
+    """用 Polar 真發出的 payload 走完整生命週期:created(trialing)→ bind →
+    active → canceled(期內不降)→ revoked(降 free)。防手寫測試與現實脫節。"""
+    store = _store(tmp_path)
+    kid = store.create_api_key("hash1", tier="free")
+
+    created = json.loads((FIXTURES / "subscription.created.json").read_text())
+    sub_id = created["data"]["id"]
+    handle_event(store, created)
+    sub = store.get_billing_subscription(sub_id)
+    assert sub is not None and sub.status == "trialing"
+    assert sub.customer_email == "founder@example.com"
+
+    assert store.bind_subscription_key(sub_id, kid) is True
+    assert store.get_api_key_tier(kid) == "paid"
+
+    handle_event(
+        store, json.loads((FIXTURES / "subscription.active.json").read_text())
+    )
+    assert store.get_api_key_tier(kid) == "paid"
+
+    handle_event(
+        store, json.loads((FIXTURES / "subscription.canceled.json").read_text())
+    )
+    assert store.get_api_key_tier(kid) == "paid"  # 期內不降級
+
+    handle_event(
+        store, json.loads((FIXTURES / "subscription.revoked.json").read_text())
+    )
+    assert store.get_api_key_tier(kid) == "free"
+    sub = store.get_billing_subscription(sub_id)
+    assert sub is not None and sub.status == "revoked"
