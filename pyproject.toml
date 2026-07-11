@@ -19,6 +19,7 @@ dependencies = [
     "feedparser==6.0.12",
     "markdownify==1.2.2",
     "beautifulsoup4==4.15.0",
+    "standardwebhooks>=1.0.1",
 ]
 
 [project.scripts]

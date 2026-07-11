@@ -64,6 +64,19 @@ class ApiKey:
 
 
 @dataclass
+class BillingSubscription:
+    """Polar 訂閱在本地的鏡像(創始名單)。api_key_id 綁定後才翻 tier。"""
+
+    subscription_id: str
+    customer_id: str | None
+    customer_email: str | None
+    status: str
+    api_key_id: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class ChangeEvent:
     id: int
     watch_id: str
@@ -116,6 +129,15 @@ CREATE TABLE IF NOT EXISTS change_events (
     withheld   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_change_events_watch ON change_events(watch_id);
+CREATE TABLE IF NOT EXISTS billing_subscriptions (
+    subscription_id TEXT PRIMARY KEY,
+    customer_id     TEXT,
+    customer_email  TEXT,
+    status          TEXT NOT NULL,
+    api_key_id      TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
 """
 
 # 對既有 db 補欄位(ALTER TABLE ADD COLUMN;以 PRAGMA table_info 判斷已存在則 no-op)。
@@ -460,6 +482,90 @@ class Store:
                 "UPDATE api_keys SET tier = ? WHERE id = ?", (tier, api_key_id)
             )
             self.conn.commit()
+
+    # --- billing_subscriptions(Polar 訂閱鏡像/創始名單)---
+
+    def upsert_billing_subscription(
+        self,
+        subscription_id: str,
+        *,
+        customer_id: str | None,
+        customer_email: str | None,
+        status: str,
+    ) -> None:
+        """以 subscription_id 為 PK upsert(webhook at-least-once → 冪等)。
+
+        更新時**不動 api_key_id**(綁定只走 bind_subscription_key,後續事件
+        不得沖掉);customer 欄位用 COALESCE 保留舊值(部分事件可能缺 customer)。
+        """
+        now = _now_iso()
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO billing_subscriptions "
+                "(subscription_id, customer_id, customer_email, status, "
+                " api_key_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, NULL, ?, ?) "
+                "ON CONFLICT(subscription_id) DO UPDATE SET "
+                "status = excluded.status, "
+                "customer_id = COALESCE(excluded.customer_id, customer_id), "
+                "customer_email = COALESCE(excluded.customer_email, customer_email), "
+                "updated_at = excluded.updated_at",
+                (subscription_id, customer_id, customer_email, status, now, now),
+            )
+            self.conn.commit()
+
+    def get_billing_subscription(
+        self, subscription_id: str
+    ) -> BillingSubscription | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM billing_subscriptions WHERE subscription_id = ?",
+                (subscription_id,),
+            ).fetchone()
+        return self._row_to_billing_sub(row) if row is not None else None
+
+    def list_billing_subscriptions(self) -> list[BillingSubscription]:
+        """創始名單總覽(CLI/營運用),依建立時間排序。"""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM billing_subscriptions ORDER BY created_at"
+            ).fetchall()
+        return [self._row_to_billing_sub(r) for r in rows]
+
+    def bind_subscription_key(self, subscription_id: str, api_key_id: str) -> bool:
+        """把 Polar 訂閱綁到一把 api_key,並按現況立即翻 tier。
+
+        訂閱不存在回 False(不動 key)。綁定當下 status ∈ PAID_STATUSES → paid;
+        終止態(revoked 等)不動 tier(綁舊訂閱不該把現有 paid key 降級)。
+        依賴方向:store → billing_polar 單向(billing_polar 不 import store)。
+        """
+        from .billing_polar import PAID_STATUSES
+
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE billing_subscriptions "
+                "SET api_key_id = ?, updated_at = ? WHERE subscription_id = ?",
+                (api_key_id, _now_iso(), subscription_id),
+            )
+            self.conn.commit()
+            if cur.rowcount == 0:
+                return False
+        sub = self.get_billing_subscription(subscription_id)
+        if sub is not None and sub.status in PAID_STATUSES:
+            self.set_api_key_tier(api_key_id, "paid")
+        return True
+
+    @staticmethod
+    def _row_to_billing_sub(row: sqlite3.Row) -> BillingSubscription:
+        return BillingSubscription(
+            subscription_id=row["subscription_id"],
+            customer_id=row["customer_id"],
+            customer_email=row["customer_email"],
+            status=row["status"],
+            api_key_id=row["api_key_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     # --- metering(計費 gate,C-stub)---
 

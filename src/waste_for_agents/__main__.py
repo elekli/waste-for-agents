@@ -47,6 +47,16 @@ def main(argv: list[str] | None = None) -> int:
         "--tier", default="free", choices=["free", "paid"], help="key tier(預設 free)"
     )
 
+    p_bind = sub.add_parser(
+        "bind-subscription",
+        help="把 Polar 訂閱綁到一把 api_key(綁定當下按訂閱狀態翻 tier)",
+    )
+    p_bind.add_argument("subscription_id", help="Polar subscription id(webhook 已記錄)")
+    p_bind.add_argument("api_key_id", help="issue-key 發出的 api_key_id")
+    p_bind.add_argument(
+        "--db", default=None, help="SQLite 路徑(省略 → 單一 data dir)"
+    )
+
     sub.add_parser("teardown", help="刪除整個 data dir(清空落地物;見 WASTE_DATA_DIR)")
 
     args = parser.parse_args(argv)
@@ -61,7 +71,19 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             tick_s=args.tick,
             unmetered=unmetered,
+            polar_webhook_secret=os.environ.get("POLAR_WEBHOOK_SECRET") or None,
         )
+        return 0
+
+    if args.command == "bind-subscription":
+        from .store import Store
+
+        store = Store.open(_resolve_db(args.db))
+        if not store.bind_subscription_key(args.subscription_id, args.api_key_id):
+            print(f"找不到訂閱:{args.subscription_id}(webhook 還沒收過這筆?)")
+            return 1
+        tier = store.get_api_key_tier(args.api_key_id)
+        print(f"已綁定 {args.subscription_id} → {args.api_key_id}(tier={tier})")
         return 0
 
     if args.command == "issue-key":

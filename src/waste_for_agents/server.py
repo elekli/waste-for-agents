@@ -254,7 +254,12 @@ class Service:
         return {"deleted": self.store.delete_watch(watch_id)}
 
 
-def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any:
+def build_app(
+    store: Store,
+    tick_s: float = 5.0,
+    unmetered: bool = False,
+    polar_webhook_secret: str | None = None,
+) -> Any:
     """組 FastAPI app:綁 Service 的 MCP tool + lifespan 啟動排程器。
 
     auth:MCP tool 從 Bearer header(Context 的底層 HTTP request)取 key、驗證 + rate
@@ -414,6 +419,31 @@ def build_app(store: Store, tick_s: float = 5.0, unmetered: bool = False) -> Any
             since, caller_key_id=caller, watch_id=watch, allow_digest=True
         )
 
+    if polar_webhook_secret:
+        # env-gated:secret 未設 → 路由不存在(404),零攻擊面。
+        from .billing_polar import (
+            WebhookVerificationError,
+            handle_event,
+            verify_webhook,
+        )
+
+        @app.post("/billing/polar/webhook", status_code=202)
+        async def polar_webhook(request: Request) -> Any:
+            """Polar 訂閱事件 → 名單記錄 + 已綁 key 的 tier 翻轉。
+
+            對 raw body 驗簽(standard-webhooks);驗不過 401 且不 parse。
+            已驗但不認識的事件回 202 忽略(寬容,防上游新增事件觸發重試風暴)。
+            """
+            raw = await request.body()
+            try:
+                event = verify_webhook(
+                    polar_webhook_secret, dict(request.headers), raw
+                )
+            except WebhookVerificationError:
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            action = handle_event(store, event)
+            return {"received": True, "action": action}
+
     app.mount("/mcp", mcp.streamable_http_app())
     return app
 
@@ -424,12 +454,14 @@ def serve(
     port: int = 8848,
     tick_s: float = 5.0,
     unmetered: bool = False,
+    polar_webhook_secret: str | None = None,
 ) -> None:
     """起常駐 HTTP server。註冊 source adapters、建 Store、跑 uvicorn。
 
     db_path=None(預設)→ 落地物進單一 data dir(`paths.db_path()`,見 paths.py);
     顯式給路徑則用之(測試 / 自訂位置)。
     unmetered=True → 關閉計費 gate(self-host / workflow 用)。
+    polar_webhook_secret:有值才掛 /billing/polar/webhook(env `POLAR_WEBHOOK_SECRET`)。
     """
     import uvicorn
 
@@ -441,5 +473,7 @@ def serve(
         db_path = str(default_db_path())
     register_default_sources()
     store = Store.open(db_path)
-    app = build_app(store, tick_s, unmetered=unmetered)
+    app = build_app(
+        store, tick_s, unmetered=unmetered, polar_webhook_secret=polar_webhook_secret
+    )
     uvicorn.run(app, host=host, port=port)
