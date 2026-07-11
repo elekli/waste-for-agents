@@ -23,6 +23,14 @@ MVP 刻意延後的項目。寫下來才算數(ENGINEERING Prime Directive 7)。
 - [ ] **錯誤訊息的 token 防護目前靠 _scrub + 不在 message 帶 headers。** uvicorn 若記錄
       完整 traceback,__cause__(httpx 錯誤)理論上仍可能含 request 細節。確認 httpx 不在
       exception repr 帶 Authorization;必要時關閉 `from exc` 或自訂 log filter。
+- [ ] **billing_subscriptions 的 PII 保留/刪除政策(multi-review,hosted 部署前)。**
+      `customer_email` 明文永存、無刪除路徑。權威資料在 Polar(MoR),本表可整列刪。
+      需:`delete_customer_data(subscription_id)`(GDPR 抹除)+ 保留窗口文件化;
+      revoked 訂閱的 email 可考慮 TTL 清空。
+- [ ] **Polar→endpoint 真實投遞未驗(billing E2E 殘項)。** sandbox E2E 以 deliveries API
+      取真 payload 本機自簽重放(驗簽/事件/tier 全鏈已驗);「Polar 打公網 endpoint」
+      這一跳等 hosted 部署後用 sandbox endpoint 指向真 URL 補驗,並把 webhook endpoint
+      從 example.com 換掉。
 
 ## 正確性 / 韌性
 
