@@ -8,7 +8,7 @@
 >
 > **發表前置 checklist:**
 > - [ ] 確認 GitHub repo README 對陌生人可讀(quickstart 已驗證能跑)
-> - [x] 測試數已填:186 passing(+7 skipped,需 live-network flag)@ main db2d696
+> - [x] 測試數已填:201 passing(+7 skipped,需 live-network flag)@ feat/founding-tier(發表前以 main 實跑數為準)
 > - [ ] 挑一個非美國深夜的時段發(HN 流量:美東早上 8–10 點常見)
 > - [ ] 發文後 1–2 小時人要在線上,即時、誠實回每一則留言(HN 對作者到場度敏感)
 
@@ -51,9 +51,9 @@ The service **is itself an MCP server**, so `list_changes` is a tool your agent 
 **"Isn't this just RSS polling + a cursor?"** Largely, yes — that's the honest core. The bet is that the *state* around it is the annoying part to get right per-agent: dedup, a true diff that survives noisy re-serialization, normalizing wildly different sources into one clean shape (content comes back as Markdown), and keeping an independent cursor **per source** so one busy feed doesn't blow away another's position. Posthorn does that once so N agents don't each reimplement it. If you think that state is trivial, I genuinely want to hear it — that's part of what I'm testing by posting this.
 
 **Honest boundaries (please read before trying it):**
-- **No hosted instance.** It's self-host today: `git clone`, `uv run python -m waste_for_agents serve`. I haven't published a PyPI/npm package or stood up a SaaS. Whether a hosted version is worth building is exactly what I'm trying to find out.
+- **No hosted instance.** It's self-host today: `git clone`, `uv run python -m waste_for_agents serve`. I haven't published a PyPI/npm package or stood up a SaaS. Whether a hosted version is worth building is exactly what I'm trying to find out — there's a $5/mo founding tier on the site if you want to vote with your card (zero charged until hosted actually ships; cancel anytime; if I never ship, you pay nothing).
 - **MVP security edges, documented in the repo:** `create_watch`'s `query` isn't validated yet (a key-holder can pass raw SQL to the Twinkle adapter); DNS-rebinding isn't guarded; `/health` is unauthenticated. It binds loopback by default. SSRF *is* guarded (scheme allowlist, blocks internal/metadata IPs, re-checks every redirect hop). Full list is in `TODOS.md`.
-- Python 3.12, 186 passing tests (plus 7 skipped behind live-network flags), open source. First real adapter is RSS; a Taiwan open-data adapter (Twinkle) is in there too. The source interface is thin — any structured source slots in.
+- Python 3.12, 201 passing tests (plus 7 skipped behind live-network flags), open source. First real adapter is RSS; a Taiwan open-data adapter (Twinkle) is in there too. The source interface is thin — any structured source slots in.
 
 **What I'm looking for:** if you run persistent or scheduled agents that watch external sources, I'd love to know how you handle "what changed" today, and where this would break for you. Skeptical takes welcome — especially on the pull-first premise.
 
@@ -78,7 +78,10 @@ Errors are captured per-watch (scrubbed of tokens, truncated) and surfaced via `
 No, and I won't pretend otherwise. It's an MVP with documented security gaps (above). It runs, it's tested, and it does what this post says — but I'd self-host it behind a trusted boundary, not expose it raw to the internet yet.
 
 **Q: Business model? Is it going to rug-pull to closed-source?**
-It's open source and self-hostable, and there's an `--unmetered` flag that turns off the billing gate entirely for self-hosters — so your own free-tier limit never blocks your own long-running workflow. If a hosted version happens, it'd be for people who don't want to run the process themselves; the self-host path stays. Right now I'm validating whether anyone wants this at all before building more.
+It's open source and self-hostable, and there's an `--unmetered` flag that turns off the billing gate entirely for self-hosters — so your own free-tier limit never blocks your own long-running workflow. The hosted version is what I'm validating: there's a $5/mo founding tier (card on file, **zero charged until hosted actually ships**, trial extends until launch, cancel anytime). If nobody subscribes, that's my answer and I don't build it. The self-host path stays either way. Payments go through Polar as merchant of record.
+
+**Q: How is this different from a webhook inbox (Hookdeck, webhooks.cc, Svix Ingest)?**
+Those are mailboxes: they durably record whatever someone POSTs at them, and they're good at that. Posthorn is a subscriber with a diff engine — it goes out and polls sources that never push anything (RSS, JSON APIs, open-data endpoints — most of the world), and what it hands your agent isn't a request log but keyed added/modified/removed events with the noise (timestamp churn, re-serialization) already subtracted, on a per-source cursor that doesn't expire after a debug-tool retention window. If your source already sends webhooks and you just need to not miss them, use one of those — they're the right tool. An inbound webhook ingest (posthorn as the durable receiving end for intermittent clients) is a natural source type on the roadmap, and honestly the two categories are converging; I'd rather say that than pretend otherwise.
 
 **Q: Why "waste-for-agents" vs "posthorn"?**
 `waste-for-agents` is the package/repo (the W.A.S.T.E. backronym); posthorn is the friendlier product name. Same thing.
