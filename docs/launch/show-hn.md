@@ -8,7 +8,7 @@
 >
 > **發表前置 checklist:**
 > - [ ] 確認 GitHub repo README 對陌生人可讀(quickstart 已驗證能跑)
-> - [x] 測試數已填:201 passing(+7 skipped,需 live-network flag)@ feat/founding-tier(發表前以 main 實跑數為準)
+> - [x] 測試數已填:208 passing(+7 skipped,需 live-network flag)@ feat/founding-tier(發表前以 main 實跑數為準)
 > - [ ] 挑一個非美國深夜的時段發(HN 流量:美東早上 8–10 點常見)
 > - [ ] 發文後 1–2 小時人要在線上,即時、誠實回每一則留言(HN 對作者到場度敏感)
 
@@ -53,7 +53,7 @@ The service **is itself an MCP server**, so `list_changes` is a tool your agent 
 **Honest boundaries (please read before trying it):**
 - **No hosted instance.** It's self-host today: `git clone`, `uv run python -m waste_for_agents serve`. I haven't published a PyPI/npm package or stood up a SaaS. Whether a hosted version is worth building is exactly what I'm trying to find out — there's a $5/mo founding tier on the site if you want to vote with your card (zero charged until hosted actually ships; cancel anytime; if I never ship, you pay nothing).
 - **MVP security edges, documented in the repo:** `create_watch`'s `query` isn't validated yet (a key-holder can pass raw SQL to the Twinkle adapter); DNS-rebinding isn't guarded; `/health` is unauthenticated. It binds loopback by default. SSRF *is* guarded (scheme allowlist, blocks internal/metadata IPs, re-checks every redirect hop). Full list is in `TODOS.md`.
-- Python 3.12, 201 passing tests (plus 7 skipped behind live-network flags), open source. First real adapter is RSS; a Taiwan open-data adapter (Twinkle) is in there too. The source interface is thin — any structured source slots in.
+- Python 3.12, 208 passing tests (plus 7 skipped behind live-network flags), open source. First real adapter is RSS; a Taiwan open-data adapter (Twinkle) is in there too. The source interface is thin — any structured source slots in.
 
 **What I'm looking for:** if you run persistent or scheduled agents that watch external sources, I'd love to know how you handle "what changed" today, and where this would break for you. Skeptical takes welcome — especially on the pull-first premise.
 

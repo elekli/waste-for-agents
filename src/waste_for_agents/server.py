@@ -419,13 +419,18 @@ def build_app(
             since, caller_key_id=caller, watch_id=watch, allow_digest=True
         )
 
-    if polar_webhook_secret:
-        # env-gated:secret 未設 → 路由不存在(404),零攻擊面。
+    if polar_webhook_secret and polar_webhook_secret.strip():
+        # env-gated:secret 未設(或全空白)→ 路由不存在(404),零攻擊面。
+        import logging
+
         from .billing_polar import (
             WebhookVerificationError,
             handle_event,
             verify_webhook,
         )
+
+        _billing_log = logging.getLogger("waste_for_agents.billing_polar")
+        _secret = polar_webhook_secret.strip()
 
         @app.post("/billing/polar/webhook", status_code=202)
         async def polar_webhook(request: Request) -> Any:
@@ -435,11 +440,12 @@ def build_app(
             已驗但不認識的事件回 202 忽略(寬容,防上游新增事件觸發重試風暴)。
             """
             raw = await request.body()
+            # header key 統一小寫(Starlette 已如此;顯式正規化不賭實作細節)
+            headers = {k.lower(): v for k, v in request.headers.items()}
             try:
-                event = verify_webhook(
-                    polar_webhook_secret, dict(request.headers), raw
-                )
-            except WebhookVerificationError:
+                event = verify_webhook(_secret, headers, raw)
+            except WebhookVerificationError as exc:
+                _billing_log.warning("polar webhook: signature rejected: %s", exc)
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
             action = handle_event(store, event)
             return {"received": True, "action": action}

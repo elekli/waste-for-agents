@@ -228,6 +228,82 @@ def test_bind_missing_subscription_false(tmp_path: Path) -> None:
     assert store.get_api_key_tier(kid) == "free"
 
 
+def test_bind_missing_key_false(tmp_path: Path) -> None:
+    """綁不存在的 api_key_id 要拒絕,不寫壞名單。"""
+    store = _store(tmp_path)
+    handle_event(store, json.loads(_sub_event("subscription.created")))
+    assert store.bind_subscription_key("sub_1", "kid_nope") is False
+    sub = store.get_billing_subscription("sub_1")
+    assert sub is not None and sub.api_key_id is None
+
+
+def test_rebind_different_key_refused(tmp_path: Path) -> None:
+    """已綁訂閱拒絕改綁另一把 key(危險操作走人工);同 key 重綁冪等。"""
+    store = _store(tmp_path)
+    kid1 = store.create_api_key("hash1", tier="free")
+    kid2 = store.create_api_key("hash2", tier="free")
+    handle_event(store, json.loads(_sub_event("subscription.created")))
+    assert store.bind_subscription_key("sub_1", kid1) is True
+    assert store.bind_subscription_key("sub_1", kid2) is False
+    assert store.bind_subscription_key("sub_1", kid1) is True  # 冪等
+    sub = store.get_billing_subscription("sub_1")
+    assert sub is not None and sub.api_key_id == kid1
+    assert store.get_api_key_tier(kid2) == "free"
+
+
+def test_bind_revoked_subscription_keeps_tier(tmp_path: Path) -> None:
+    """綁定終止態訂閱不動 tier(不升也不降)。"""
+    store = _store(tmp_path)
+    kid = store.create_api_key("hash1", tier="free")
+    handle_event(store, json.loads(_sub_event("subscription.created")))
+    handle_event(
+        store, json.loads(_sub_event("subscription.revoked", status="canceled"))
+    )
+    assert store.bind_subscription_key("sub_1", kid) is True
+    assert store.get_api_key_tier(kid) == "free"
+
+
+def test_past_due_freezes_tier(tmp_path: Path) -> None:
+    """暫時性繳費狀態(past_due)不降級——降級唯一路徑是 revoked 事件。"""
+    store = _store(tmp_path)
+    kid = store.create_api_key("hash1", tier="free")
+    handle_event(store, json.loads(_sub_event("subscription.created")))
+    store.bind_subscription_key("sub_1", kid)
+    assert store.get_api_key_tier(kid) == "paid"
+    handle_event(
+        store, json.loads(_sub_event("subscription.updated", status="past_due"))
+    )
+    assert store.get_api_key_tier(kid) == "paid"
+
+
+def test_malformed_payloads_tolerated(tmp_path: Path) -> None:
+    """缺 data / 缺 id / 缺 status 一律「忽略」不炸(webhook 寬容原則)。"""
+    store = _store(tmp_path)
+    assert handle_event(store, {"type": "subscription.created"}).startswith(
+        "ignored:"
+    )
+    assert handle_event(
+        store, {"type": "subscription.created", "data": {"status": "trialing"}}
+    ).startswith("ignored:")
+    assert handle_event(
+        store, {"type": "subscription.created", "data": {"id": "sub_x"}}
+    ).startswith("ignored:")
+    assert store.list_billing_subscriptions() == []
+
+
+def test_action_string_no_internal_key_id(tmp_path: Path) -> None:
+    """回應的 action 不外洩內部 api_key_id。"""
+    store = _store(tmp_path)
+    kid = store.create_api_key("hash1", tier="free")
+    handle_event(store, json.loads(_sub_event("subscription.created")))
+    store.bind_subscription_key("sub_1", kid)
+    action = handle_event(
+        store, json.loads(_sub_event("subscription.active", status="active"))
+    )
+    assert kid not in action
+    assert action == "tier-set:sub_1:paid"
+
+
 def test_upsert_preserves_binding(tmp_path: Path) -> None:
     """後續事件 upsert 不能沖掉已綁的 api_key_id。"""
     store = _store(tmp_path)

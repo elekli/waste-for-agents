@@ -11,16 +11,24 @@
   (2026-07-11,fixture 在 tests/fixtures/polar/)`subscription.revoked` 的
   data.status 是 "canceled" 不是 "revoked";status 是 Polar 內部表示,
   event type 才是穩定語意。revoked 事件 → 權益終止 → free;canceled 事件 →
-  本期末不續、期內權益照舊 → tier 不動;其餘事件按 status ∈ PAID_STATUSES 翻。
+  本期末不續、期內權益照舊 → tier 不動。
+- **tier 只升不自動降(降級唯一路徑 = revoked 事件)**:past_due/unpaid 等
+  暫時性繳費狀態不動 tier——「卡號在檔」承諾下,一次扣款失敗不該立刻
+  降級再回升震盪;Polar 催繳流程失敗的終點就是 revoked,由它收尾。
 - 未知事件型別回「忽略」而非失敗:webhook 端點對上游新增事件必須寬容,
   否則 Polar 重試風暴;簽章錯誤則絕不寬容(由 verify_webhook 擋)。
+- 亂序投遞 = 接受的風險:不做 timestamp 水位(Polar 重試屬罕見,終態事件
+  revoked 冪等且單向,亂序最壞是短暫多交付,不會多收費)。
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from standardwebhooks.webhooks import Webhook, WebhookVerificationError
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "PAID_STATUSES",
@@ -78,6 +86,7 @@ def handle_event(store: Any, event: dict[str, Any]) -> str:
     """
     event_type = event.get("type")
     if event_type not in SUBSCRIPTION_EVENTS:
+        logger.info("polar webhook: ignored event type %s", event_type)
         return f"ignored:{event_type}"
 
     data = event.get("data")
@@ -109,15 +118,21 @@ def handle_event(store: Any, event: dict[str, Any]) -> str:
         status=effective_status,
     )
 
+    # 回應的 action 字串只帶 subscription_id(呼叫者本來就有),不帶內部
+    # api_key_id(不外洩內部識別)。
     sub = store.get_billing_subscription(sub_id)
     if sub is not None and sub.api_key_id is not None:
         if event_type == "subscription.revoked":
             store.set_api_key_tier(sub.api_key_id, "free")
-            return f"tier:{sub.api_key_id}:free"
+            logger.info("polar webhook: %s revoked -> tier free", sub_id)
+            return f"tier-set:{sub_id}:free"
         if event_type == "subscription.canceled":
             # 本期末不續:期內權益照舊,tier 不動
             return f"recorded:{sub_id}:{effective_status}"
-        tier = "paid" if status in PAID_STATUSES else "free"
-        store.set_api_key_tier(sub.api_key_id, tier)
-        return f"tier:{sub.api_key_id}:{tier}"
+        if status in PAID_STATUSES:
+            store.set_api_key_tier(sub.api_key_id, "paid")
+            logger.info("polar webhook: %s %s -> tier paid", sub_id, status)
+            return f"tier-set:{sub_id}:paid"
+        # 暫時性狀態(past_due 等):tier 凍結,只有 revoked 能降(見模組 docstring)
+        return f"recorded:{sub_id}:{effective_status}"
     return f"recorded:{sub_id}:{effective_status}"

@@ -71,7 +71,10 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             tick_s=args.tick,
             unmetered=unmetered,
-            polar_webhook_secret=os.environ.get("POLAR_WEBHOOK_SECRET") or None,
+            polar_webhook_secret=(
+                os.environ.get("POLAR_WEBHOOK_SECRET") or ""
+            ).strip()
+            or None,
         )
         return 0
 

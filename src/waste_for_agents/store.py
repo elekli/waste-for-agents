@@ -129,6 +129,9 @@ CREATE TABLE IF NOT EXISTS change_events (
     withheld   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_change_events_watch ON change_events(watch_id);
+-- billing_subscriptions:Polar 訂閱鏡像(創始名單)。customer_email 是 PII:
+-- 用途限billing 對帳與人工聯繫,權威資料在 Polar(MoR),本表可整列刪除而不影響
+-- 計費;正式的保留/刪除政策(GDPR 刪除路徑)記在 TODOS,hosted 部署前處理。
 CREATE TABLE IF NOT EXISTS billing_subscriptions (
     subscription_id TEXT PRIMARY KEY,
     customer_id     TEXT,
@@ -535,25 +538,33 @@ class Store:
     def bind_subscription_key(self, subscription_id: str, api_key_id: str) -> bool:
         """把 Polar 訂閱綁到一把 api_key,並按現況立即翻 tier。
 
-        訂閱不存在回 False(不動 key)。綁定當下 status ∈ PAID_STATUSES → paid;
-        終止態(revoked 等)不動 tier(綁舊訂閱不該把現有 paid key 降級)。
+        回 False 的情況(皆不動任何狀態):訂閱不存在、api_key 不存在、
+        訂閱已綁到**另一把** key(改綁是危險操作,要先人工查清楚再直接動 DB;
+        同一把 key 重綁視為冪等,回 True)。
+        綁定當下 status ∈ PAID_STATUSES → paid;終止態(revoked 等)不動 tier
+        (綁舊訂閱不該把現有 paid key 降級)。整段在鎖內:檢查、寫入、翻 tier
+        原子完成(RLock 可重入,嵌套呼叫 set_api_key_tier 安全)。
         依賴方向:store → billing_polar 單向(billing_polar 不 import store)。
         """
         from .billing_polar import PAID_STATUSES
 
         with self._lock:
-            cur = self.conn.execute(
+            if self.get_api_key(api_key_id) is None:
+                return False
+            sub = self.get_billing_subscription(subscription_id)
+            if sub is None:
+                return False
+            if sub.api_key_id is not None and sub.api_key_id != api_key_id:
+                return False
+            self.conn.execute(
                 "UPDATE billing_subscriptions "
                 "SET api_key_id = ?, updated_at = ? WHERE subscription_id = ?",
                 (api_key_id, _now_iso(), subscription_id),
             )
             self.conn.commit()
-            if cur.rowcount == 0:
-                return False
-        sub = self.get_billing_subscription(subscription_id)
-        if sub is not None and sub.status in PAID_STATUSES:
-            self.set_api_key_tier(api_key_id, "paid")
-        return True
+            if sub.status in PAID_STATUSES:
+                self.set_api_key_tier(api_key_id, "paid")
+            return True
 
     @staticmethod
     def _row_to_billing_sub(row: sqlite3.Row) -> BillingSubscription:
